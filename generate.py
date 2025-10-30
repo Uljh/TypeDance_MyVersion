@@ -17,8 +17,8 @@ from diffusers import DiffusionPipeline,StableDiffusionDepth2ImgPipeline,StableD
 
 ### model_id = "C:/Users/user/.cache/huggingface/hub/models--runwayml--stable-diffusion-v1-5/snapshots/aa9ba505e1973ae5cd05f5aedd345178f52f8e6a"
 model_id = "runwayml/stable-diffusion-v1-5"
-pipe_img2img_art = StableDiffusionImg2ImgPipeline.from_pretrained(model_id, torch_dtype=torch.float16, local_files_only=False).to("cuda")
-pipe_text2img = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16,local_files_only=True).to("cuda")
+pipe_img2img_art = StableDiffusionImg2ImgPipeline.from_pretrained(model_id, torch_dtype=torch.float16, local_files_only=False).to("cpu")
+pipe_text2img = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16,local_files_only=True).to("cpu")
 
 current_path = os.getcwd()
 

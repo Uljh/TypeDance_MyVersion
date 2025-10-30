@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import numpy as np
 import torch
+import os
 from pathlib import Path
 from PIL import Image
 import cv2
@@ -25,8 +26,9 @@ def brainstorm():
     data = request.get_json()
     user_prompt = data["user_prompt"]
     answer = get_answer(user_prompt)
-    print(answer)
     string = answer["content"]
+    ### print(answer)
+    print(string)
     concept_dict = get_dict_from_answer(string)
     # concept_dict = {"1. Giant Panda": "The giant panda is not only a beloved symbol of Chengdu, but it is also native to the region. Using the image of a playful and adorable giant panda in the logo can represent Chengdu's connection to nature and its commitment to wildlife conservation.",
 # "2. Sichuan Cuisine": "Chengdu is renowned for its delicious and spicy Sichuan cuisine. Using elements like chili peppers, hot pot, or a pair of chopsticks can symbolize the city's vibrant food culture and its reputation as a food lover's paradise.",
@@ -88,6 +90,10 @@ def image_view():
     data = request.get_json()
     image_url = data["image_url"]
     mode = data["mode"]
+
+    # 确保 check 目录存在
+    os.makedirs("check", exist_ok=True)
+
     image = dataurl_to_pil(image_url, output_path=None).convert("RGB")
     image.save("check/from_interface.png")
     if mode == "image":
@@ -97,7 +103,9 @@ def image_view():
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         mask = get_img_embedding(image, input_points, mode)
         img_mask = mask_to_image(mask, image)
-        img_mask.save("check/img_mask.png")
+
+        save_path = "check/from_interface.png"
+        img_mask.save(save_path) #img_mask.save("check/img_mask.png")
 
         # highlight
         image_r, contours_g = highlight_mask(mask, image, mode)
