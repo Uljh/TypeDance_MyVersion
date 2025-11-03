@@ -18,7 +18,8 @@ from transformers import CLIPProcessor, CLIPModel
 
 
 app = Flask(__name__)
-CORS(app, resources={r'/*': {'origins': '*'}})
+### CORS(app, resources={r'/*': {'origins': '*'}})   #防止cors跨域拦截，浏览器不允许前端端口 3000 的页面请求后端端口 88（因为跨域）。
+CORS(app, supports_credentials=True)
 
 
 @app.route('/brainstorm',methods=['GET', 'POST'])
@@ -85,99 +86,112 @@ def brainstorm():
 #         return pil_to_data_uri(image_r)
 
 # click
-@app.route('/image_segment',methods=['GET', 'POST'])
+@app.route('/image_segment', methods=['GET', 'POST'])
 def image_view():
     data = request.get_json()
     image_url = data["image_url"]
     mode = data["mode"]
-    # print("Received image_url (first 200 chars):", image_url[:200])
 
     print("🟥 [Backend] Received mode:", mode)
     print("🟥 [Backend] image_url head:", image_url[:50])
     print("🟥 [Backend] image_url valid:", image_url.startswith("data:image"))
 
-    # 确保 check 目录存在
     os.makedirs("check", exist_ok=True)
-
     image = dataurl_to_pil(image_url, output_path=None).convert("RGB")
     image.save("check/from_interface.png")
 
-
+    # ============ IMAGERY 模式 ============
     if mode == "image":
-        # input_box = np.array([input_box[0]*(image.size[1]/180), input_box[1]*(image.size[1]/180), input_box[2]*(image.size[1]/180), input_box[3]*(image.size[1]/180)])
-        input_points = np.array(data["points"])*(image.size[1]/180)
+        input_points = np.array(data["points"]) * (image.size[1] / 180)
         image = np.array(image)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         mask = get_img_embedding(image, input_points, mode)
         img_mask = mask_to_image(mask, image)
+        img_mask.save("check/img_mask.png")
 
-        save_path = "check/from_interface.png"
-        img_mask.save(save_path) #img_mask.save("check/img_mask.png")
-
-        # highlight
         image_r, contours_g = highlight_mask(mask, image, mode)
         image_r.save("check/img_segment.png")
 
-        ## 找contour为了shape
-        blank_rgba = Image.new("RGBA", image_r.size, (0,0,0,0))
+        blank_rgba = Image.new("RGBA", image_r.size, (0, 0, 0, 0))
         blank_rgba_arr = np.array(blank_rgba)
-        ## 找contour里面最大的那个
-        max_contour = find_max_contour(contours_g) # 有不连续线段
-        # img_mask = add_bg_color(img_mask, color=[0, 0, 0])
-        # image = np.array(img_mask)
-        # gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        # ret, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY)
-        # contours, hierarchy = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        # max_contour = find_max_contour(contours)
+        max_contour = find_max_contour(contours_g)
         cv2.drawContours(blank_rgba_arr, max_contour, -1, (79, 79, 79, 255), thickness=8)
         img_contour = Image.fromarray(blank_rgba_arr).convert("RGBA")
-        img_contour = crop_element_from_RGBA(img_contour, mask_single_FLAG= False)
-        # 存一下图片好debug
+        img_contour = crop_element_from_RGBA(img_contour, mask_single_FLAG=False)
         img_contour.save("check/img_segment_contour.png")
 
+        return pil_to_data_uri(image_r)
+
+    # ============ TYPEFACE 模式 ============
     if mode == "word":
         input_boxes = data["box"]
-        print(input_boxes)
+        print("🟦 input_boxes:", input_boxes)
+
         if isinstance(input_boxes[0], list):
             print("--ADD SELECTION--")
-            mask_merge = np.zeros((300,464), dtype=bool)
+            mask_merge = np.zeros((300, 464), dtype=bool)
             image = np.array(image)
             for input_box in input_boxes:
-                input_box = np.array([input_box[0], input_box[1], input_box[2], input_box[3]])
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                mask = get_img_embedding(image, input_box, mode)
+                box = np.array([input_box[0], input_box[1], input_box[2], input_box[3]])
+                img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                mask = get_img_embedding(img_rgb, box, mode)
                 mask_merge = np.bitwise_or(mask_merge, mask)
-                img_mask = mask_to_image(mask_merge, image)
-                img_mask.save("check/img_mask_word.png")
-                img_word = get_word_img(img_mask)
-                img_word.save("check/img_word.png")
-                # highlight
-                image_r, contours_g = highlight_mask(mask_merge, image, mode)
-                image_r.save("check/img_segment.png")
-            # SVG 
-            # reverted_word, _ = img_word_to_canvas(mask_merge, image, mode)
-            # reverted_word.save("check/reverted_word.png")
-            # img_to_svg_api("check/reverted_word.png", "frontend/src/assets/canvas/word.svg")
 
-        else: 
-            input_box = input_boxes
-            input_box = np.array([input_box[0], input_box[1], input_box[2], input_box[3]])
-            image = np.array(image)
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            mask = get_img_embedding(image, input_box, mode)
-            img_mask = mask_to_image(mask, image)
+            img_mask = mask_to_image(mask_merge, image)
             img_mask.save("check/img_mask_word.png")
+            img_mask.save("check/img_mask.png")
             img_word = get_word_img(img_mask)
             img_word.save("check/img_word.png")
-            # highlight
-            image_r, contours_g = highlight_mask(mask, image, mode)
-            image_r.save("check/img_segment.png")
-            # SVG 
-            # reverted_word, _ = img_word_to_canvas(mask, image, mode)
-            # reverted_word.save("check/reverted_word.png")
-            # img_to_svg_api("check/reverted_word.png", "frontend/src/assets/canvas/word.svg")
 
-    return pil_to_data_uri(image_r)
+            # 高亮选中区域
+            image_r, contours_g = highlight_mask(mask_merge, image, mode)
+            image_r.save("check/img_segment.png")
+
+        else:
+            box = np.array([input_boxes[0], input_boxes[1], input_boxes[2], input_boxes[3]])
+            image_np = np.array(image)
+            image_rgb = cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB)
+            mask = get_img_embedding(image_rgb, box, mode)
+
+            # === 高亮部分 ===
+            img_mask = mask_to_image(mask, image_np)
+            img_mask.save("check/img_mask_word.png")
+            img_mask.save("check/img_mask.png")
+            img_word = get_word_img(img_mask)
+            img_word.save("check/img_word.png")
+
+            # === 高亮图（选中部分）===
+            image_r, contours_g = highlight_mask(mask, image_np, mode)
+            image_r.save("check/img_segment.png")
+
+            # === 生成轮廓图 ===
+            blank_rgba = Image.new("RGBA", image_r.size, (0, 0, 0, 0))
+            blank_rgba_arr = np.array(blank_rgba)
+            max_contour = find_max_contour(contours_g)
+            cv2.drawContours(blank_rgba_arr, max_contour, -1, (79, 79, 79, 255), thickness=8)
+            img_contour = Image.fromarray(blank_rgba_arr).convert("RGBA")
+            img_contour = crop_element_from_RGBA(img_contour, mask_single_FLAG=False)
+            img_contour.save("check/img_segment_contour.png")
+
+            # === 新增：生成剩余结构并转为 SVG ===
+            # 取反掩码，得到剩余部分
+            inverse_mask = np.logical_not(mask)
+            remaining_image = np.array(image_np)
+            remaining_image[~inverse_mask] = [255, 255, 255]  # 白底
+            remaining_pil = Image.fromarray(remaining_image)
+            remaining_pil.save("check/remaining_word.png")
+
+            # 转为 SVG 文件供前端加载，保存svg文件
+            svg_path = "frontend/public/canvas/word_dynamic.svg"
+            img_to_svg_api("check/remaining_word.png", svg_path)
+            print("SVG will be saved to:", svg_path)
+
+        # === 前端返回 JSON，包含高亮图 + SVG 路径 ===
+        return jsonify({
+            "highlight": pil_to_data_uri(image_r),   # 左侧显示高亮笔画
+            "svg_path": "/canvas/word_dynamic.svg"  # 中央加载SVG
+        })
+
 
 
 @app.route('/image_extract',methods=['GET', 'POST'])

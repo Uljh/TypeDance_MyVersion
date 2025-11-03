@@ -198,159 +198,8 @@ const canvas = inject("canvas")
 const storeDesignPrior = useDesignPriorStore()
 const eventBus = inject("eventBus")
 
-// // =================== ABOUT FONT ==========================
-// let fontFamilyList = ref(fontList.map(item => item.fontFamily))
-// let selectedFont = ref("Arial")
-// let finalX = ref(0)
-// let finalY = ref(0)
-// let finalHeight = ref(0)
-// let finalFontSize = ref(100)
-// let finalText = ref("fighting")
-// let firstDisplayWord = ref(true)
-
-// function displayText() {
-//   var textarea = document.getElementById("object");
-//   var canvas = document.getElementById("canva-word");
-//   var ctx = canvas.getContext("2d");
-//   // console.log(canvas.width, canvas.height)
-//   // Clear the canvas
-//   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-//   // Set the maximum font size and position
-//   var maxFontSize = 120;
-//   if (firstDisplayWord.value) {
-//     var x = canvas.width / 2;
-//     var y = canvas.height / 2;
-//   }
-//   else {
-//     var x = canvas.width / 4;
-//     var y = canvas.height / 4;
-//   }
-
-//   // Get the text from the textarea
-//   var text = textarea.value;
-
-//   // Set the initial font size
-//   var fontSize = maxFontSize;
-
-//   // Decrease the font size until the text fits within the canvas
-//   do {
-//     // Set the font and text color
-//     ctx.font = fontSize + "px Times New Roman";
-//     ctx.fillStyle = "black";
-
-//     // Measure the width of the text
-//     var textWidth = ctx.measureText(text).width;
-
-//     // Decrease the font size
-//     fontSize--;
-
-//     // Break the loop if the font size becomes too small
-//     if (fontSize <= 0) {
-//       break;
-//     }
-//   } while (textWidth > canvas.width);
-//   ctx.font = fontSize + "px Times New Roman";
-//   ctx.fillStyle = "black";
-//   let textHeight = ctx.measureText(text).actualBoundingBoxAscent;
-//   // Set the final font size and position
-//   ctx.font = fontSize + "px " + selectedFont.value;
-//   x -= textWidth / 2;
-//   y += textHeight / 2 - 10;
-//   finalX.value = x
-//   finalY.value = y
-//   finalHeight.value = textHeight
-//   finalFontSize.value = fontSize
-//   finalText.value = text
-
-//   // Display the text on the canvas
-//   ctx.fillText(text, x, y);
-// }
-
 // // =================== ABOUT LASSO ==========================
-// // getElementById 只能在点击之后使用，因为我这个是setup模式，这些东西都还没加载呢
-// const isLassoEnabled = ref(false) // 开关
-// function startLasso() {
-//   isLassoEnabled.value = !isLassoEnabled.value;
-//   // delete canvas
-//   if (isLassoEnabled.value) {
-//     var oldCanvas = document.getElementById("canva-word");
-//     if (firstDisplayWord.value) {
-//       oldCanvas.parentNode.removeChild(oldCanvas);
-//       firstDisplayWord.value = false
-//     }
-//     else {
-//       var parentElement = oldCanvas.parentNode;
-//       var grandparentElement = parentElement.parentNode;
-//       grandparentElement.removeChild(parentElement);
-//     }
-//     // create canvas
-//     const wordInputDiv = document.querySelector(".word-input");
-//     const canvasWord0 = document.createElement("canvas")
-
-//     canvasWord0.id = "canva-word";
-//     canvasWord0.width = 232;
-//     canvasWord0.height = 150;
-//     wordInputDiv.appendChild(canvasWord0);
-//     // add style for canvas
-//     const style = document.createElement("style");
-//     style.innerHTML = `
-//     .canvas-container {
-//       background-color: #ffffff;
-//       padding: 5px 8px;
-//       border-radius: 6px;
-//       border: 1px solid #cacaca; }`;
-//     document.head.appendChild(style);
-
-//     // add fabric
-//     const canvasWord = new fabric.Canvas('canva-word', { isDrawingMode: true });
-
-//     // card.set('backgroundColor', 'red');
-//     canvasWord.setWidth(232);
-//     canvasWord.setHeight(150);
-//     canvasWord.renderAll()
-//     // console.log(canvasWord)
-//     console.log(finalHeight.value)
-//     var text = new fabric.Text(finalText.value, {
-//       left: finalX.value,
-//       top: finalY.value - finalHeight.value - 10,
-//       fontSize: finalFontSize.value,
-//       fill: 'black',
-//       fontFamily: selectedFont.value,
-//     });
-//     canvasWord.add(text);
-//     canvasWord.controlsAboveOverlay = true;
-//     canvasWord.freeDrawingBrush.color = "#797B0B"
-//     canvasWord.freeDrawingBrush.width = 1
-
-//     canvasWord.on('mouse:wheel', opt => {
-//       let delta = opt.e.deltaY // 滚轮，向上滚一下是 -100，向下滚一下是 100
-//       let zoom = canvasWord.getZoom() // 获取画布当前缩放值
-//       zoom *= 0.999 ** delta
-//       if (zoom > 5) zoom = 5
-//       if (zoom < 0.5) zoom = 0.5
-//       canvasWord.zoomToPoint({ // 关键点
-//         x: opt.e.offsetX,
-//         y: opt.e.offsetY
-//       },
-//         zoom
-//       )
-//       opt.e.preventDefault()
-//       opt.e.stopPropagation()
-//     })
-
-//     canvasWord.on('path:created', function (options) {
-//       console.log("start drawing")
-//       var path = options.path;
-//       path.set('fill', 'black');
-//       console.log(path)
-//       canvasWord.isDrawingMode = false;
-//       canvasWord.remove(path);
-//       canvasWord.clipPath = path;
-//     });
-//   } else {
-//   }
-// }
+// Lasso 选区模式（旧逻辑，现已废弃，使用拖拽选区代替）
 
 // =================== ABOUT FONT ==========================
 let fontFamilyList = ref(fontList.map(item => item.fontFamily))
@@ -491,79 +340,68 @@ function displayText() {
     canvasWord.renderAll();
   });
 
-  // 这个就是信号
-  canvasWord.on('mouse:up', function (o) {
-    isDown = false;
-    const option = { format: 'png', quality: 2, multiplier: 2 }
-    const dataUrl = canvasWord.toDataURL(option)
-    current_box.value = [rectangle.left * 2, rectangle.top * 2, (rectangle.left + rectangle.width) * 2, (rectangle.top + rectangle.height) * 2];
-    if (addSelection.value == true) {
-      console.log(select_boxes.value);
-      select_boxes.value.push(current_box.value);
-      let param = {
-        "box": select_boxes.value,
-        "image_url": dataUrl,
-        "mode": "word"
-      };
+  // ✅ 鼠标释放事件：处理字体笔画选区 + 同步中央 SVG
+    canvasWord.on('mouse:up', function (o) {
+      isDown = false;
+      const option = { format: 'png', quality: 2, multiplier: 2 };
+      const dataUrl = canvasWord.toDataURL(option);
+      current_box.value = [
+        rectangle.left * 2,
+        rectangle.top * 2,
+        (rectangle.left + rectangle.width) * 2,
+        (rectangle.top + rectangle.height) * 2
+      ];
+
+      // 封装参数
+      let param;
+      if (addSelection.value === true) {
+        select_boxes.value.push(current_box.value);
+        param = {
+          box: select_boxes.value,
+          image_url: dataUrl,
+          mode: "word"
+        };
+      } else {
+        param = {
+          box: current_box.value,
+          image_url: dataUrl,
+          mode: "word"
+        };
+      }
+
+      console.log("📤 Sending param to /image_segment:", param);
+
+      // 调用后端接口
       imageSegment(param, function (data) {
+        console.log("✅ Received data from backend:", data);
+
+        // ========== 左侧 Canvas：显示高亮选区 ==========
         const imgEl = document.createElement('img');
-        imgEl.src = data
-        // 插入页面
+        imgEl.src = data.highlight; // 后端返回的高亮部分（DataURL）
         document.body.appendChild(imgEl);
-        imgEl.onload = () => { // 必须要加onload，等图片加载完全，不然就是空的
+
+        imgEl.onload = () => {
           canvasWord.clear();
-          const imgInstanceNew = new fabric.Image(imgEl, {
-            left: 0, top: 0,
-          });
-          // 设置缩放
+          const imgInstanceNew = new fabric.Image(imgEl, { left: 0, top: 0 });
           imgInstanceNew.scaleToWidth(canvasWord.getWidth());
           imgInstanceNew.scaleToHeight(canvasWord.getHeight());
           imgInstanceNew.selectable = false;
+          canvasWord.add(imgInstanceNew);
+          canvasWord.renderAll();
+          imgEl.remove();
+        };
 
-          canvasWord.add(imgInstanceNew)
-          canvasWord.renderAll()
-          // 删除页面中的图片元素
-          imgEl.remove()
+        // ========== 中央主画布：加载剩余结构（SVG） ==========
+        if (data.svg_path) {
+          console.log("🎨 Loading SVG from:", data.svg_path);
+          const svgUrl = String(data.svg_path);
+          displayTextOnCanvas(svgUrl);
+          displayTextOnCanvas(data.svg_path);
+        } else {
+          console.warn("⚠️ No svg_path returned from backend.");
         }
-
-        canvasWord.renderAll()
-      })
-    }
-    else {
-      let param = {
-        "box": current_box.value,
-        "image_url": dataUrl,
-        "mode": "word"
-      };
-      console.log(current_box.value);
-      imageSegment(param, function (data) {
-        const imgEl = document.createElement('img');
-        imgEl.src = data
-        // 插入页面
-        document.body.appendChild(imgEl);
-        imgEl.onload = () => { // 必须要加onload，等图片加载完全，不然就是空的
-          canvasWord.clear();
-          const imgInstanceNew = new fabric.Image(imgEl, {
-            left: 0, top: 0,
-          });
-          // 设置缩放
-          imgInstanceNew.scaleToWidth(canvasWord.getWidth());
-          imgInstanceNew.scaleToHeight(canvasWord.getHeight());
-          imgInstanceNew.selectable = false;
-
-          canvasWord.add(imgInstanceNew)
-          canvasWord.renderAll()
-          // 删除页面中的图片元素
-          imgEl.remove()
-        }
-
-        canvasWord.renderAll()
-      })
-    }
-
-  });
-
-
+      });
+    });
 }
 
 function addSelectionTrigger() {
@@ -571,13 +409,31 @@ function addSelectionTrigger() {
   select_boxes.value.push(current_box.value);
 }
 
-function displayTextOnCanvas() {
-  fabric.loadSVGFromURL('/src/assets/canvas/word.svg', function (objects, options) {
-    var svgObject = fabric.util.groupSVGElements(objects, options);
+// ✅ 改进版：接受动态路径的函数
+function displayTextOnCanvas(svgPath = '/src/assets/canvas/word.svg') {
+  fabric.loadSVGFromURL(svgPath, function (objects, options) {
+    const svgObject = fabric.util.groupSVGElements(objects, options);
     svgObject.id = "word";
+
+    // 删除旧的 word 图层
+    const oldObjs = canvas.c.getObjects();
+    oldObjs.forEach(o => {
+      if (o.id === "word") canvas.c.remove(o);
+    });
+
+    // 自适应居中
+    const cw = canvas.c.getWidth();
+    const ch = canvas.c.getHeight();
+    const scale = 0.7 * Math.min(cw / svgObject.width, ch / svgObject.height);
+    svgObject.scale(scale);
+    svgObject.left = (cw - svgObject.width * scale) / 2;
+    svgObject.top = (ch - svgObject.height * scale) / 2;
+
     canvas.c.add(svgObject);
+    canvas.c.renderAll();
   });
 }
+
 
 // =================== ABOUT IDEA ===========================
 let ttipContent1 = ref("explanation")
@@ -623,437 +479,8 @@ function clickBrainstorm() {
 // =================== ABOUT IMAGE ==========================
 let isExistCanvasImage = ref(false)
 let firstDisplay = ref(true)
-// // box
-// function loadImageOrDisplay1() {
-//   var img1 = document.getElementById("img1");
-//   // 初始上传，点击上传本地文件
-//   if (img1.src == "http://localhost/src/assets/upload_image/default1.png") {
-//     document.getElementById('input-img1').click()
-//     document.getElementById('input-img1').addEventListener('change', function (event) {
-//       var file = event.target.files[0];
-//       var reader = new FileReader();
-//       reader.onload = function (event) {
-//         img1.src = event.target.result;
-//       };
-//       reader.readAsDataURL(file);
-//     });
-//   }
-//   // 已经上传好了，点击显示到canvas上
-//   else {
-//     // 删掉原有的canvas再新建一个，再加入fabric canvas
-//     // fabric canvas 有两个，原先的这个canvas只是第一个，共同归属canvas-container管
-//     var oldCanvas = document.getElementById("canva-img");
-//     if (firstDisplay.value) {
-//       oldCanvas.parentNode.removeChild(oldCanvas);
-//       firstDisplay.value = false
-//     }
-//     else {
-//       var parentElement = oldCanvas.parentNode;
-//       var grandparentElement = parentElement.parentNode;
-//       grandparentElement.removeChild(parentElement);
-//     }
 
-//     // add new canvas
-//     const imgInputDiv = document.querySelector(".img-input");
-//     const canvasImage0 = document.createElement("canvas")
-
-//     canvasImage0.id = "canva-img";
-//     canvasImage0.width = 180;
-//     canvasImage0.height = 180;
-//     imgInputDiv.appendChild(canvasImage0);
-
-//     // add style for canvas
-//     const style = document.createElement("style");
-//     style.innerHTML = `
-//     .canvas-container {
-//       background-color: #ffffff;
-//       padding: 5px 8px;
-//       border-radius: 6px;
-//       border: 1px solid #cacaca; }`;
-//     document.head.appendChild(style);
-
-//     // add image instance 
-//     const canvasImage = new fabric.Canvas('canva-img');
-//     canvasImage.setWidth(180);
-//     canvasImage.setHeight(180);
-//     canvasImage.renderAll()
-
-//     const imgInstance = new fabric.Image(img1, {
-//       left: 15, top: 10,
-//     });
-
-//     imgInstance.scaleToWidth(canvasImage.getWidth());
-//     imgInstance.scaleToHeight(canvasImage.getHeight());
-
-//     canvasImage.add(imgInstance);
-//     imgInstance.selectable = false; // image is not movable
-
-//     canvasImage.renderAll()
-//     isExistCanvasImage.value = !isExistCanvasImage.value
-
-//     // free draw rectangle
-//     var rectangle, isDown, origX, origY;
-
-//     canvasImage.on('mouse:down', function (o) {
-//       var pointer = canvasImage.getPointer(o.e);
-
-//       isDown = true;
-//       origX = pointer.x;
-//       origY = pointer.y;
-
-//       rectangle = new fabric.Rect({
-//         left: origX,
-//         top: origY,
-//         fill: 'transparent',
-//         // stroke: '#6cffd6',
-//         stroke: 'white',
-//         strokeWidth: 2,
-//       });
-//       rectangle.selectable = false
-//       canvasImage.add(rectangle);
-//     });
-
-//     canvasImage.on('mouse:move', function (o) {
-//       if (!isDown) return;
-//       var pointer = canvasImage.getPointer(o.e);
-//       if (origX > pointer.x) {
-//         rectangle.set({ left: Math.abs(pointer.x) });
-//       }
-//       if (origY > pointer.y) {
-//         rectangle.set({ top: Math.abs(pointer.y) });
-//       }
-
-//       rectangle.set({ width: Math.abs(origX - pointer.x) });
-//       rectangle.set({ height: Math.abs(origY - pointer.y) });
-//       canvasImage.renderAll();
-//     });
-
-//     // 这个就是信号
-//     canvasImage.on('mouse:up', function (o) {
-//       isDown = false;
-//       let param = {
-//         // XYXY format
-//         "box": [rectangle.left - 15, rectangle.top - 10, rectangle.left + rectangle.width - 15, rectangle.top + rectangle.height - 10],
-//         "image_url": img1.src,
-//         "mode": "image"
-//       };
-
-//       imageSegment(param, function (data) {
-//         const imgEl = document.createElement('img');
-//         imgEl.src = data.img
-//         storeDesignPrior.shapeImage = data.shape
-//         storeDesignPrior.colorImage = data.color
-//         // 插入页面
-//         document.body.appendChild(imgEl);
-//         imgEl.onload = () => { // 必须要加onload，等图片加载完全，不然就是空的
-//           canvasImage.clear();
-//           const imgInstanceNew = new fabric.Image(imgEl, {
-//             left: 15, top: 10,
-//           });
-//           // 设置缩放
-//           imgInstanceNew.scaleToWidth(canvasImage.getWidth());
-//           imgInstanceNew.scaleToHeight(canvasImage.getHeight());
-//           imgInstanceNew.selectable = false;
-
-//           canvasImage.add(imgInstanceNew)
-//           canvasImage.renderAll()
-//           // 删除页面中的图片元素
-//           imgEl.remove()
-//         }
-//         canvasImage.renderAll()
-//       })
-//     });
-
-//   };
-// }
-// // box
-// function loadImageOrDisplay2() {
-//   var img2 = document.getElementById("img2");
-//   // 初始上传，点击上传本地文件
-//   if (img2.src == "http://localhost/src/assets/upload_image/default1.png") {
-//     document.getElementById('input-img2').click()
-//     document.getElementById('input-img2').addEventListener('change', function (event) {
-//       var file = event.target.files[0];
-//       var reader = new FileReader();
-//       reader.onload = function (event) {
-//         img2.src = event.target.result;
-//       };
-//       reader.readAsDataURL(file);
-//     });
-//   }
-//   // 已经上传好了，点击显示到canvas上
-//   else {
-//     // 删掉原有的canvas再新建一个，再加入fabric canvas
-//     // fabric canvas 有两个，原先的这个canvas只是第一个，共同归属canvas-container管
-//     var oldCanvas = document.getElementById("canva-img");
-//     if (firstDisplay.value) {
-//       oldCanvas.parentNode.removeChild(oldCanvas);
-//       firstDisplay.value = false
-//     }
-//     else {
-//       var parentElement = oldCanvas.parentNode;
-//       var grandparentElement = parentElement.parentNode;
-//       grandparentElement.removeChild(parentElement);
-//     }
-
-//     // add new canvas
-//     const imgInputDiv = document.querySelector(".img-input");
-//     const canvasImage0 = document.createElement("canvas")
-
-//     canvasImage0.id = "canva-img";
-//     canvasImage0.width = 180;
-//     canvasImage0.height = 180;
-//     imgInputDiv.appendChild(canvasImage0);
-
-//     // add style for canvas
-//     const style = document.createElement("style");
-//     style.innerHTML = `
-//     .canvas-container {
-//       background-color: #ffffff;
-//       padding: 5px 8px;
-//       border-radius: 6px;
-//       border: 1px solid #cacaca; }`;
-//     document.head.appendChild(style);
-
-//     // add image instance 
-//     const canvasImage = new fabric.Canvas('canva-img');
-//     canvasImage.setWidth(180);
-//     canvasImage.setHeight(180);
-//     canvasImage.renderAll()
-
-//     const imgInstance = new fabric.Image(img2, {
-//       left: 15, top: 10,
-//     });
-
-//     imgInstance.scaleToWidth(canvasImage.getWidth());
-//     imgInstance.scaleToHeight(canvasImage.getHeight());
-
-//     canvasImage.add(imgInstance);
-//     imgInstance.selectable = false; // image is not movable
-
-//     canvasImage.renderAll()
-//     isExistCanvasImage.value = !isExistCanvasImage.value
-
-//     // free draw rectangle
-//     var rectangle, isDown, origX, origY;
-
-//     canvasImage.on('mouse:down', function (o) {
-//       var pointer = canvasImage.getPointer(o.e);
-
-//       isDown = true;
-//       origX = pointer.x;
-//       origY = pointer.y;
-
-//       rectangle = new fabric.Rect({
-//         left: origX,
-//         top: origY,
-//         fill: 'transparent',
-//         // stroke: '#6cffd6',
-//         stroke: 'white',
-//         strokeWidth: 2,
-//       });
-//       rectangle.selectable = false
-//       canvasImage.add(rectangle);
-//     });
-
-//     canvasImage.on('mouse:move', function (o) {
-//       if (!isDown) return;
-//       var pointer = canvasImage.getPointer(o.e);
-//       if (origX > pointer.x) {
-//         rectangle.set({ left: Math.abs(pointer.x) });
-//       }
-//       if (origY > pointer.y) {
-//         rectangle.set({ top: Math.abs(pointer.y) });
-//       }
-
-//       rectangle.set({ width: Math.abs(origX - pointer.x) });
-//       rectangle.set({ height: Math.abs(origY - pointer.y) });
-//       canvasImage.renderAll();
-//     });
-
-//     // 这个就是信号
-//     canvasImage.on('mouse:up', function (o) {
-//       isDown = false;
-//       let param = {
-//         // XYXY format
-//         "box": [rectangle.left - 15, rectangle.top - 10, rectangle.left + rectangle.width - 15, rectangle.top + rectangle.height - 10],
-//         "image_url": img2.src,
-//         "mode": "image"
-//       };
-
-//       imageSegment(param, function (data) {
-//         const imgEl = document.createElement('img');
-//         imgEl.src = data.img
-//         storeDesignPrior.shapeImage = data.shape
-//         storeDesignPrior.colorImage = data.color
-//         // 插入页面
-//         document.body.appendChild(imgEl);
-//         imgEl.onload = () => { // 必须要加onload，等图片加载完全，不然就是空的
-//           canvasImage.clear();
-//           const imgInstanceNew = new fabric.Image(imgEl, {
-//             left: 15, top: 10,
-//           });
-//           // 设置缩放
-//           imgInstanceNew.scaleToWidth(canvasImage.getWidth());
-//           imgInstanceNew.scaleToHeight(canvasImage.getHeight());
-//           imgInstanceNew.selectable = false;
-
-//           canvasImage.add(imgInstanceNew)
-//           canvasImage.renderAll()
-//           // 删除页面中的图片元素
-//           imgEl.remove()
-//         }
-//         canvasImage.renderAll()
-//       })
-//     });
-
-//   };
-// }
-// // box
-// function loadImageOrDisplay3() {
-//   var img3 = document.getElementById("img3");
-//   // 初始上传，点击上传本地文件
-//   if (img3.src == "http://localhost/src/assets/upload_image/default1.png") {
-//     document.getElementById('input-img3').click()
-//     document.getElementById('input-img3').addEventListener('change', function (event) {
-//       var file = event.target.files[0];
-//       var reader = new FileReader();
-//       reader.onload = function (event) {
-//         img3.src = event.target.result;
-//       };
-//       reader.readAsDataURL(file);
-//     });
-//   }
-//   // 已经上传好了，点击显示到canvas上
-//   else {
-//     // 删掉原有的canvas再新建一个，再加入fabric canvas
-//     // fabric canvas 有两个，原先的这个canvas只是第一个，共同归属canvas-container管
-//     var oldCanvas = document.getElementById("canva-img");
-//     if (firstDisplay.value) {
-//       oldCanvas.parentNode.removeChild(oldCanvas);
-//       firstDisplay.value = false
-//     }
-//     else {
-//       var parentElement = oldCanvas.parentNode;
-//       var grandparentElement = parentElement.parentNode;
-//       grandparentElement.removeChild(parentElement);
-//     }
-
-//     // add new canvas
-//     const imgInputDiv = document.querySelector(".img-input");
-//     const canvasImage0 = document.createElement("canvas")
-
-//     canvasImage0.id = "canva-img";
-//     canvasImage0.width = 180;
-//     canvasImage0.height = 180;
-//     imgInputDiv.appendChild(canvasImage0);
-
-//     // add style for canvas
-//     const style = document.createElement("style");
-//     style.innerHTML = `
-//     .canvas-container {
-//       background-color: #ffffff;
-//       padding: 5px 8px;
-//       border-radius: 6px;
-//       border: 1px solid #cacaca; }`;
-//     document.head.appendChild(style);
-
-//     // add image instance 
-//     const canvasImage = new fabric.Canvas('canva-img');
-//     canvasImage.setWidth(180);
-//     canvasImage.setHeight(180);
-//     canvasImage.renderAll()
-
-//     const imgInstance = new fabric.Image(img3, {
-//       left: 15, top: 10,
-//     });
-
-//     imgInstance.scaleToWidth(canvasImage.getWidth());
-//     imgInstance.scaleToHeight(canvasImage.getHeight());
-
-//     canvasImage.add(imgInstance);
-//     imgInstance.selectable = false; // image is not movable
-
-//     canvasImage.renderAll()
-//     isExistCanvasImage.value = !isExistCanvasImage.value
-
-//     // free draw rectangle
-//     var rectangle, isDown, origX, origY;
-
-//     canvasImage.on('mouse:down', function (o) {
-//       var pointer = canvasImage.getPointer(o.e);
-
-//       isDown = true;
-//       origX = pointer.x;
-//       origY = pointer.y;
-
-//       rectangle = new fabric.Rect({
-//         left: origX,
-//         top: origY,
-//         fill: 'transparent',
-//         // stroke: '#6cffd6',
-//         stroke: 'white',
-//         strokeWidth: 2,
-//       });
-//       rectangle.selectable = false
-//       canvasImage.add(rectangle);
-//     });
-
-//     canvasImage.on('mouse:move', function (o) {
-//       if (!isDown) return;
-//       var pointer = canvasImage.getPointer(o.e);
-//       if (origX > pointer.x) {
-//         rectangle.set({ left: Math.abs(pointer.x) });
-//       }
-//       if (origY > pointer.y) {
-//         rectangle.set({ top: Math.abs(pointer.y) });
-//       }
-
-//       rectangle.set({ width: Math.abs(origX - pointer.x) });
-//       rectangle.set({ height: Math.abs(origY - pointer.y) });
-//       canvasImage.renderAll();
-//     });
-
-//     // 这个就是信号
-//     canvasImage.on('mouse:up', function (o) {
-//       isDown = false;
-//       let param = {
-//         // XYXY format
-//         "box": [rectangle.left - 15, rectangle.top - 10, rectangle.left + rectangle.width - 15, rectangle.top + rectangle.height - 10],
-//         "image_url": img3.src,
-//         "mode": "image"
-//       };
-
-//       imageSegment(param, function (data) {
-//         const imgEl = document.createElement('img');
-//         imgEl.src = data.img
-//         storeDesignPrior.shapeImage = data.shape
-//         storeDesignPrior.colorImage = data.color
-//         // 插入页面
-//         document.body.appendChild(imgEl);
-//         imgEl.onload = () => { // 必须要加onload，等图片加载完全，不然就是空的
-//           canvasImage.clear();
-//           const imgInstanceNew = new fabric.Image(imgEl, {
-//             left: 15, top: 10,
-//           });
-//           // 设置缩放
-//           imgInstanceNew.scaleToWidth(canvasImage.getWidth());
-//           imgInstanceNew.scaleToHeight(canvasImage.getHeight());
-//           imgInstanceNew.selectable = false;
-
-//           canvasImage.add(imgInstanceNew)
-//           canvasImage.renderAll()
-//           // 删除页面中的图片元素
-//           imgEl.remove()
-//         }
-//         canvasImage.renderAll()
-//       })
-//     });
-
-//   };
-// }
-
-// anchor
+// anchor 锚点，抛锚
 function loadImageOrDisplay1() {
   var img1 = document.getElementById("img1");
   // 初始上传，点击上传本地文件

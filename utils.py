@@ -5,6 +5,7 @@ import numpy as np
 import cv2
 import os
 from PIL import Image, ImageDraw, ImageFont
+import cairosvg
 from colorthief import ColorThief
 import openai
 from keybert import KeyBERT
@@ -20,24 +21,25 @@ key = data.get('openai_api_key', None)
 openai.api_key = key
 
 def img_to_svg_api(img_path, output_path):
-    # output_path: svg path
+    import requests, os
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
     response = requests.post(
         'https://vectorizer.ai/api/v1/vectorize',
         files={'image': open(img_path, 'rb')},
         data={
-            # TODO: Add more upload options here
+            "mode": "test"   # ✅ 启用测试模式（不会消耗额度）
         },
-        headers={
-            'Authorization':
-            'Basic img_to_svg_api API key'
-        },
+        auth=('vkelh6g2zcrtjvl', 'tgb8allm0ge4sm5ea2tiufn6uj7ekiqlsabms0nm1s3tj7g0oonb')
     )
+
     if response.status_code == requests.codes.ok:
-        # Save result
         with open(output_path, 'wb') as out:
             out.write(response.content)
+        print(f"✅ SVG 文件已保存到: {output_path}")
     else:
-        print("Error:", response.status_code, response.text)
+        print("❌ 请求失败:", response.status_code, response.text)
+
 
 def dataurl_to_pil(dataurl, output_path=None):
     image_data = dataurl.replace("data:image/png;base64,", '')
