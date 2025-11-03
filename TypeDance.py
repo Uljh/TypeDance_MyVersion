@@ -90,12 +90,19 @@ def image_view():
     data = request.get_json()
     image_url = data["image_url"]
     mode = data["mode"]
+    # print("Received image_url (first 200 chars):", image_url[:200])
+
+    print("🟥 [Backend] Received mode:", mode)
+    print("🟥 [Backend] image_url head:", image_url[:50])
+    print("🟥 [Backend] image_url valid:", image_url.startswith("data:image"))
 
     # 确保 check 目录存在
     os.makedirs("check", exist_ok=True)
 
     image = dataurl_to_pil(image_url, output_path=None).convert("RGB")
     image.save("check/from_interface.png")
+
+
     if mode == "image":
         # input_box = np.array([input_box[0]*(image.size[1]/180), input_box[1]*(image.size[1]/180), input_box[2]*(image.size[1]/180), input_box[3]*(image.size[1]/180)])
         input_points = np.array(data["points"])*(image.size[1]/180)

@@ -14,6 +14,8 @@ export function startBrainStorm(param, callback) {
 }
 
 export function imageSegment(param, callback) {
+    console.log("🟦 [Frontend] image_url (first 100 chars):", param.image_url?.slice(0, 100));
+    console.log("🟦 [Frontend] mode:", param.mode);
     const url = `${T_URL}/image_segment`;
     axios.post(url, param)
     .then(response => {

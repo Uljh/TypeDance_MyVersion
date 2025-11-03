@@ -40,6 +40,7 @@ def resize_with_aspect(image: np.ndarray, max_side: int):
     resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
     return resized, scale
 
+#主函数，根据点或框生成 mask。
 def get_img_embedding(image, input, mode):
     """
     获取 mask（布尔数组）。支持自动降分辨率策略，避免显存不足。
@@ -107,6 +108,7 @@ def get_img_embedding(image, input, mode):
 
     return mask
 
+#在原图上叠加半透明遮罩与轮廓高亮。
 def highlight_mask(mask, image, mode):
     """将 mask 区域高亮叠在 image 上，返回 RGBA 图像 + 轮廓列表"""
     mask = mask.astype(np.uint8)
@@ -116,8 +118,10 @@ def highlight_mask(mask, image, mode):
     image_rgba = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
     image_rgba[:, :, 3] = np.where(mask == 1, 255, 75)
     image_r = Image.fromarray(image_rgba)
+    print("高亮完成")
     return image_r, contours
 
+#将 mask 区域映射到画布上。
 def img_word_to_canvas(mask, image, mode):
     """mask -> RGBA image + contours"""
     mask = mask.astype(np.uint8)
@@ -125,14 +129,17 @@ def img_word_to_canvas(mask, image, mode):
     image_rgba = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
     image_rgba[:, :, 3] = np.where(mask == 1, 0, 255)
     image_r = Image.fromarray(image_rgba)
+    print("映射完成")
     return image_r, contours
 
+#输出透明背景的分割结果。
 def mask_to_image(mask, image):
     """mask -> RGBA 图像，透明背景 + mask 区域不透明"""
     mask = mask.astype(np.uint8)
     image_rgba = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
     image_rgba[:, :, 3] = np.where(mask == 1, 255, 0)
     image_r = Image.fromarray(image_rgba)
+    print("选中字体部分已完成")
     return image_r
 
 

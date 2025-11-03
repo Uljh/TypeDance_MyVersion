@@ -1057,7 +1057,7 @@ let firstDisplay = ref(true)
 function loadImageOrDisplay1() {
   var img1 = document.getElementById("img1");
   // 初始上传，点击上传本地文件
-  if (img1.src == "http://localhost/src/assets/upload_image/default1.png") {
+  if (img1.src.includes("default1.png")) {
     document.getElementById('input-img1').click()
     document.getElementById('input-img1').addEventListener('change', function (event) {
       var file = event.target.files[0];
@@ -1192,7 +1192,7 @@ function loadImageOrDisplay1() {
 function loadImageOrDisplay2() {
   var img2 = document.getElementById("img2");
   // 初始上传，点击上传本地文件
-  if (img2.src == "http://localhost/src/assets/upload_image/default1.png") {
+  if (img2.src.includes("default1.png")) {
     document.getElementById('input-img2').click()
     document.getElementById('input-img2').addEventListener('change', function (event) {
       var file = event.target.files[0];
@@ -1327,7 +1327,7 @@ function loadImageOrDisplay2() {
 function loadImageOrDisplay3() {
   var img3 = document.getElementById("img3");
   // 初始上传，点击上传本地文件
-  if (img3.src == "http://localhost/src/assets/upload_image/default1.png") {
+  if (img3.src.includes("default1.png")) {
     document.getElementById('input-img3').click()
     document.getElementById('input-img3').addEventListener('change', function (event) {
       var file = event.target.files[0];
