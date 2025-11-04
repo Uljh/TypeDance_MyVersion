@@ -624,7 +624,7 @@ resize = transforms.Resize(512)
 def bg_removal(img, current_path):
     # current_path = os.getcwd()
     # print(current_path)
-    model_path = os.path.join(current_path, 'models/bg_removel.pth')  # the model path
+    model_path = os.path.join(current_path, 'models/isnet-general-use.pth')  # the model path
     input_size=[1024,1024]
     net = ISNetDIS()
     if torch.cuda.is_available():

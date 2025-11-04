@@ -3,7 +3,6 @@ from io import BytesIO
 import base64
 import numpy as np
 import cv2
-import os
 from PIL import Image, ImageDraw, ImageFont
 import cairosvg
 from colorthief import ColorThief
@@ -14,6 +13,8 @@ from pathlib import Path
 import convertapi
 import requests
 import yaml
+import os
+import shutil
 with open('my_key.yaml', 'r') as file:
     data = yaml.safe_load(file)
 
@@ -192,22 +193,43 @@ def rgb_to_hex(rgb):
     return hex_value
 
 def extract_color_palatte(image_test):
-    color_thief = ColorThief(image_test)
-    color_count=5
+    """
+    从输入的 PIL.Image 图像中提取主色调调色板。
+    使用 ColorThief 提取 dominant colors，并叠加默认的 color_bar 样式。
+    """
+
+    # ✅ 新增：如果输入是 PIL.Image，就先保存为临时文件供 ColorThief 读取
+    if isinstance(image_test, Image.Image):
+        tmp_path = "check/tmp_color_extract.png"
+        image_test.save(tmp_path)
+        color_thief = ColorThief(tmp_path)
+    else:
+        # 否则说明传入的是路径字符串
+        color_thief = ColorThief(image_test)
+
+    color_count = 5
     palette = color_thief.get_palette(color_count=color_count)
+
+    # 载入默认色条背景
     color_bar = Image.open("frontend/src/assets/generation/default/color_bar.png").convert("RGBA")
-    color_bar_w , color_bar_h = color_bar.size
-    gap_length = color_bar_w//color_count
+    color_bar_w, color_bar_h = color_bar.size
+    gap_length = color_bar_w // color_count
+
+    # 绘制颜色矩形条
     bg = Image.new("RGBA", color_bar.size, "white")
+    brush = ImageDraw.Draw(bg)
     for i in range(color_count):
         hex_value = rgb_to_hex(palette[i])
-        # create rectangle image
-        brush = ImageDraw.Draw(bg)  
-        brush.rectangle([(i*gap_length,0), ((i+1)*gap_length, color_bar_h)], fill=hex_value)
-    # print(bg.size, color_bar.size)
-    final_palette = Image.alpha_composite(bg,color_bar) # color_bar 放上面
-    # final_palette = bg
+        brush.rectangle(
+            [(i * gap_length, 0), ((i + 1) * gap_length, color_bar_h)],
+            fill=hex_value
+        )
+
+    # ✅ 将颜色条叠加到默认模板
+    final_palette = Image.alpha_composite(bg, color_bar)
+
     return final_palette
+
 
 def extract_keyword(prompt):
     kw_model = KeyBERT(model='all-mpnet-base-v2')
@@ -222,16 +244,22 @@ def extract_keyword(prompt):
 def add_text_to_img(keyword):
     # 加载字体和图像
     mf = ImageFont.truetype('frontend/src/assets/fonts/en/IBMPlexSans.ttf', 80)
-    img_defalt_semantic = Image.open("frontend/src/assets/generation/default/semantic.png")
+    img_defalt_semantic = Image.open("frontend/src/assets/generation/default/semantic.png").convert("RGBA")
     brush = ImageDraw.Draw(img_defalt_semantic)
-    # 要绘制的文本
-    # 计算文本的宽度
-    text_width, _ = brush.textsize(keyword, font=mf)
-    # 计算文本应该放置的位置
-    text_x = img_defalt_semantic.width - text_width - 30  # 图像宽度减去文本宽度再减去30px的距离
+
+    # ✅ 新API：textbbox，取文字的边界盒
+    bbox = brush.textbbox((0, 0), keyword, font=mf)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+
+    # 计算文字位置（右对齐，保留 30px 边距）
+    text_x = img_defalt_semantic.width - text_width - 30
+    text_y = (img_defalt_semantic.height - text_height) // 2  # 垂直居中
+
     # 绘制文本
-    brush.text((text_x, 90), keyword, fill=(70, 70, 70), font=mf)
+    brush.text((text_x, text_y), keyword, fill=(70, 70, 70), font=mf)
     return img_defalt_semantic
+
 
 def get_rgba_border(img_rgba):
     left, top, right, bottom = img_rgba.width, img_rgba.height, 0, 0 
@@ -281,18 +309,23 @@ def scale_image(init_image):
         return scale_img_r
 
 def clear_folder():
-        main_folder = "C:/Users/user/A-project/TypeDance/"
-        folder_path = ["check/first_generation", "check/second_generation"]  # 文件夹路径
+    main_folder = "check/"
+    folder_path = ["first_generation", "final_generation"]
 
-        # 遍历文件夹中的所有文件并删除
-        for i in range(len(folder_path)):
-            for filename in os.listdir(main_folder+folder_path[i]):
-                file_path = os.path.join(main_folder, folder_path[i], filename)
-                try:
-                    if os.path.isfile(file_path):
-                        os.unlink(file_path)
-                except Exception as e:
-                    print(f"Failed to delete {file_path}. Reason: {e}")
+    for sub in folder_path:
+        folder = os.path.join(main_folder, sub)
+        os.makedirs(folder, exist_ok=True)  # ✅ 若不存在则自动创建
+
+        for filename in os.listdir(folder):
+            file_path = os.path.join(folder, filename)
+            try:
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
+            except Exception as e:
+                print(f"Failed to delete {file_path}. Reason: {e}")
+
 
 def find_max_contour(contours):
     if len(contours)>1:

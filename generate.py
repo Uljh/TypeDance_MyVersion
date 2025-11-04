@@ -16,26 +16,120 @@ from clip_interrogator import Config, Interrogator
 from diffusers import DiffusionPipeline,StableDiffusionDepth2ImgPipeline,StableDiffusionImg2ImgPipeline,StableDiffusionPipeline
 
 ### model_id = "C:/Users/user/.cache/huggingface/hub/models--runwayml--stable-diffusion-v1-5/snapshots/aa9ba505e1973ae5cd05f5aedd345178f52f8e6a"
+
+# =================== 设备与模型加载 ===================
 model_id = "runwayml/stable-diffusion-v1-5"
-pipe_img2img_art = StableDiffusionImg2ImgPipeline.from_pretrained(model_id, torch_dtype=torch.float16, local_files_only=False).to("cpu")
-pipe_text2img = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16,local_files_only=True).to("cpu")
-
 current_path = os.getcwd()
+print("[INFO] 检测可用设备中...")
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
+dtype = torch.float16 if device == "cuda" else torch.float32
+
+def load_pipeline_with_fallback():
+    """加载 Stable Diffusion 模型，自动处理显存不足和加速问题"""
+    try:
+        print(f"[INFO] 尝试在 {device.upper()} 上加载模型 (dtype={dtype})")
+        pipe_img2img_art = StableDiffusionImg2ImgPipeline.from_pretrained(
+            model_id,
+            torch_dtype=dtype,
+            local_files_only=True  # 若你没联网下载过模型，可改为 False
+        ).to(device)
+
+        pipe_text2img = StableDiffusionPipeline.from_pretrained(
+            model_id,
+            torch_dtype=dtype,
+            local_files_only=True
+        ).to(device)
+
+        # ✅ 在这里插入打印，确认模型在哪个设备上
+        print(f"[INFO] pipe_img2img_art 运行于设备: {pipe_img2img_art.device}")
+        print(f"[INFO] pipe_text2img 运行于设备: {pipe_text2img.device}")
+        print(f"[INFO] 模型成功加载于 {device.upper()} 上 ✅")
+
+        return pipe_img2img_art, pipe_text2img
+
+    except RuntimeError as e:
+        print("⚠️ [WARN] GPU 显存不足，自动切换到 CPU 模式运行...")
+        pipe_img2img_art = StableDiffusionImg2ImgPipeline.from_pretrained(
+            model_id,
+            torch_dtype=torch.float32,
+            local_files_only=False
+        ).to("cpu")
+
+        pipe_text2img = StableDiffusionPipeline.from_pretrained(
+            model_id,
+            torch_dtype=torch.float32,
+            local_files_only=True
+        ).to("cpu")
+
+        # ✅ CPU fallback 分支同样打印
+        print(f"[INFO] pipe_img2img_art 运行于设备: {pipe_img2img_art.device}")
+        print(f"[INFO] pipe_text2img 运行于设备: {pipe_text2img.device}")
+        print("[INFO] 模型已切换至 CPU 模式 ✅")
+
+        return pipe_img2img_art, pipe_text2img
+
+# 调用加载函数
+pipe_img2img_art, pipe_text2img = load_pipeline_with_fallback()
+
+#批量生成
 def img2img(pipe_img2img, prompt, im_bg, num_images, s=0.9):
-    # Generator = torch.Generator(device="cuda").manual_seed(220124)
-    images_img2img = []
-    while (len(images_img2img)<num_images):
-        seed = random.randint(0,99999999)
-        Generator = torch.Generator(device="cuda").manual_seed(seed)
-        output = pipe_img2img(prompt = prompt, image=im_bg, strength=s, guidance_scale=7, 
-                            generator=Generator, num_images_per_prompt=1, return_dict=True)
-        # images.insert(0, init_image)
-        images = output.images[0]
-        nfsw_checker = output.nsfw_content_detected
-        if not nfsw_checker[0]:
-            images_img2img.append(images)
-    return images_img2img
+    # 随机生成一个种子
+    seed = random.randint(0, 99999999)
+    device_type = pipe_img2img.device.type  # 自动检测 pipeline 的设备
+    generator = torch.Generator(device=device_type).manual_seed(seed)
+
+    # 一次生成全部图片
+    output = pipe_img2img(
+        prompt=prompt,
+        image=im_bg,
+        strength=s,
+        guidance_scale=7,
+        num_images_per_prompt=num_images,
+        generator=generator
+    )
+
+    # 过滤掉 NSFW 图片
+    images = [
+        img for i, img in enumerate(output.images)
+        if not output.nsfw_content_detected[i]
+    ]
+
+    # ✅ 如果全被过滤，就保留第一张作为兜底
+    if len(images) == 0:
+        print("[WARN] 所有生成图被 NSFW 过滤，自动保留第一张作为兜底。")
+        images = [output.images[0]]
+
+    return images
+
+
+#逐一生成
+# def img2img(pipe_img2img, prompt, im_bg, num_images, s=0.9):
+#     # Generator = torch.Generator(device="cuda").manual_seed(220124)
+#     images_img2img = []
+#     while (len(images_img2img)<num_images):
+#         seed = random.randint(0,99999999)
+#         # 根据当前设备选择合适的生成器
+#         device_type = pipe_img2img.device.type  # 自动检测 pipeline 的设备（cpu 或 cuda）
+#         generator = torch.Generator(device=device_type).manual_seed(seed)
+#         ### output = pipe_img2img(prompt = prompt, image=im_bg, strength=s, guidance_scale=7,
+#         ###                     generator=Generator, num_images_per_prompt=1, return_dict=True)
+#
+#         output = pipe_img2img(
+#             prompt=prompt,
+#             image=im_bg,
+#             strength=s,
+#             guidance_scale=7,
+#             num_images_per_prompt=1,# ✅ 每次只生成一张，避免逻辑重复
+#             generator=generator
+#         )
+#
+#         # images.insert(0, init_image)
+#         images = output.images[0]
+#         nfsw_checker = output.nsfw_content_detected
+#         if not nfsw_checker[0]:
+#             images_img2img.append(images)
+#     return images_img2img
 
 def text2img(pipe_text2img, prompt, num_images):
     prompts = [prompt] * num_images
@@ -171,36 +265,7 @@ class Generation:
         init_image_list = []
         mode_list = []
         img_list = []
-        # for img_path in sorted_mae_list_seleted:
-        #     # mode = img_path.split("_")[0]
-        #     # mode_list.append(mode)
-        #     # img_path = img_path.replace(str(mode)+"_", "")
-        #     init_image_list.append(Image.open(img_path).convert("RGB").resize((512, 512)))
-        # # 初始化clip
-        # model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
-        # processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
-        # inputs = processor(text=[prompt.split(",")[0], "a word or text"], images=init_image_list, return_tensors="pt", padding=True)
-        # outputs = model(**inputs)
-        # logits_per_image = outputs.logits_per_image # this is the image-text similarity score
-        # probs = logits_per_image.softmax(dim=1) # we can take the softmax to get the label probabilities
-        # regeneration_decision = probs.argmax(axis=1)
-        # # 生成
-        # img_list = []
-        # seed = random.randint(0,99999999)
-        # Generator = torch.Generator(device="cuda").manual_seed(seed)
-        # for id, img_path in enumerate(sorted_mae_list_seleted):
-        #     # mode = img_path.split("_")[0]
-        #     # img_path = img_path.replace(str(mode)+"_", "")
-        #     init_image = Image.open(img_path).convert("RGB").resize((512, 512))
-        #     print(img_path)
-        #     if regeneration_decision[id] == 2:
-        #         image_img2img = pipe_img2img_art(prompt=prompt, negative_prompt=n_propmt, image=init_image, strength=0.65, 
-        #                                     guidance_scale=7.5, generator=Generator).images[0]
-        #         image_img2img.save("check/second_generation/"+img_path.split("/")[-1])
-        #         img_list.append(image_img2img)
-        #     else:
-        #         init_image.save("check/second_generation/"+img_path.split("/")[-1])
-        #         img_list.append(init_image)
+
         for id, img_path in enumerate(sorted_mae_list_seleted):
             init_image = Image.open(img_path).convert("RGB").resize((512, 512))
             print(img_path)
@@ -300,7 +365,7 @@ class Generation:
 
     def __call__(self, img_word, img_mask, prompt, semantic_prompt, num_to_generate, strength, option_list):
         clear_folder()
-
+        current_path = os.path.dirname(os.path.abspath(__file__)) #即 D:\TypeDance_Doc\TypeDance
         img_word_list = []
         FLAG_shape = False
         # ==================== shape ====================
@@ -358,7 +423,11 @@ class Generation:
                     img_r = add_bg_color(img_r, color=[255, 255, 255])
                     # 抠图 method2
                     img_RGBA = bg_removal(bg_img, current_path)
-                    color_thief = ColorThief(img_RGBA)
+
+                    temp_path = os.path.join(current_path, "check/temp_rgba.png")
+                    img_RGBA.save(temp_path) #后续这个临时文件可以删除
+                    color_thief = ColorThief(temp_path)
+
                     main_color = color_thief.get_color()
                     image_bg_color = add_bg_color(img_RGBA, main_color)
                     img_r = self.add_alpha(word_img_RGBA, image_bg_color)
@@ -472,7 +541,7 @@ class Feedback(Generation):
         # 3. mode
         clear_folder()
 
-        
+
         # ============== step 1: get feedback objects ==============
         current_mode = self.get_feedback_mode(previous_mode)
 

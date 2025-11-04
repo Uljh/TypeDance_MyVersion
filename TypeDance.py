@@ -357,5 +357,10 @@ def refine_img():
 
     return {"dataURL": pil_to_data_uri(img)} 
 
-if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=88, debug=True)
+# if __name__ == '__main__':
+#     app.run(host='127.0.0.1', port=88, debug=True)
+
+#取消热重载，减少显存使用
+if __name__ == "__main__":
+    print("[INFO] 启动 Flask 后端服务中...")
+    app.run(host="127.0.0.1", port=88, debug=False, use_reloader=False)
