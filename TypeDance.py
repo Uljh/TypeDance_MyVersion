@@ -363,4 +363,5 @@ def refine_img():
 #取消热重载，减少显存使用
 if __name__ == "__main__":
     print("[INFO] 启动 Flask 后端服务中...")
-    app.run(host="127.0.0.1", port=88, debug=False, use_reloader=False)
+    #app.run(host="127.0.0.1", port=88, debug=False, use_reloader=False)  #本地回环访问
+    app.run(host="0.0.0.0", port=6006, debug=False, use_reloader=False) #服务器启动

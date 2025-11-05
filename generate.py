@@ -16,9 +16,10 @@ from clip_interrogator import Config, Interrogator
 from diffusers import DiffusionPipeline,StableDiffusionDepth2ImgPipeline,StableDiffusionImg2ImgPipeline,StableDiffusionPipeline
 
 ### model_id = "C:/Users/user/.cache/huggingface/hub/models--runwayml--stable-diffusion-v1-5/snapshots/aa9ba505e1973ae5cd05f5aedd345178f52f8e6a"
+model_path = "/root/autodl-tmp/TypeDance/models/huggingface/hub/models--runwayml--stable-diffusion-v1-5/snapshots/451f4fe16113bff5a5d2269ed5ad43b0592e9a14"
+#model_path = "runwayml/stable-diffusion-v1-5"
 
 # =================== 设备与模型加载 ===================
-model_id = "runwayml/stable-diffusion-v1-5"
 current_path = os.getcwd()
 print("[INFO] 检测可用设备中...")
 
@@ -30,13 +31,13 @@ def load_pipeline_with_fallback():
     try:
         print(f"[INFO] 尝试在 {device.upper()} 上加载模型 (dtype={dtype})")
         pipe_img2img_art = StableDiffusionImg2ImgPipeline.from_pretrained(
-            model_id,
+            model_path,
             torch_dtype=dtype,
             local_files_only=True  # 若你没联网下载过模型，可改为 False
         ).to(device)
 
         pipe_text2img = StableDiffusionPipeline.from_pretrained(
-            model_id,
+            model_path,
             torch_dtype=dtype,
             local_files_only=True
         ).to(device)
@@ -51,13 +52,13 @@ def load_pipeline_with_fallback():
     except RuntimeError as e:
         print("⚠️ [WARN] GPU 显存不足，自动切换到 CPU 模式运行...")
         pipe_img2img_art = StableDiffusionImg2ImgPipeline.from_pretrained(
-            model_id,
+            model_path,
             torch_dtype=torch.float32,
             local_files_only=False
         ).to("cpu")
 
         pipe_text2img = StableDiffusionPipeline.from_pretrained(
-            model_id,
+            model_path,
             torch_dtype=torch.float32,
             local_files_only=True
         ).to("cpu")

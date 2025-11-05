@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const T_URL = 'http://127.0.0.1:88';
+const T_URL = 'http://127.0.0.1:6006';
 
 
 export function startBrainStorm(param, callback) {
