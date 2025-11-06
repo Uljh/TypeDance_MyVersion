@@ -373,32 +373,58 @@ function displayText() {
 
       // 调用后端接口
       imageSegment(param, function (data) {
-        console.log("✅ Received data from backend:", data);
+        console.log("✅ [WORD Mode] Received data from backend:", data);
+        console.log("✅ [WORD Mode] data.highlight exists:", !!data.highlight);
+        console.log("✅ [WORD Mode] data.highlight preview:", data.highlight?.substring(0, 50) + "...");
 
         // ========== 左侧 Canvas：显示高亮选区 ==========
         const imgEl = document.createElement('img');
+        if (!data.highlight) {
+          console.error("❌ No highlight data received from backend");
+          return;
+        }
+        // 确保使用最新的 base64 数据，避免缓存问题
+        // 由于 base64 data URL 包含了完整的数据，不需要担心缓存
+        // 但为了确保显示最新内容，我们直接使用返回的数据
         imgEl.src = data.highlight; // 后端返回的高亮部分（DataURL）
+        imgEl.crossOrigin = "anonymous"; // 避免跨域问题
         document.body.appendChild(imgEl);
+        console.log("✅ [WORD Mode] Image element created, src length:", data.highlight.length);
 
         imgEl.onload = () => {
+          console.log("✅ [WORD Mode] Image loaded, dimensions:", imgEl.width, "x", imgEl.height);
+          // 完全清除 canvas，确保显示最新内容
           canvasWord.clear();
+          canvasWord.backgroundColor = "white"; // 确保背景色
+          
           const imgInstanceNew = new fabric.Image(imgEl, { left: 0, top: 0 });
           imgInstanceNew.scaleToWidth(canvasWord.getWidth());
           imgInstanceNew.scaleToHeight(canvasWord.getHeight());
           imgInstanceNew.selectable = false;
           canvasWord.add(imgInstanceNew);
           canvasWord.renderAll();
+          console.log("✅ [WORD Mode] Image added to canvas and rendered");
           imgEl.remove();
+        };
+        
+        imgEl.onerror = (error) => {
+          console.error("❌ [WORD Mode] Failed to load image:", error);
+          console.error("❌ [WORD Mode] Image src preview:", data.highlight.substring(0, 100));
         };
 
         // ========== 中央主画布：加载剩余结构（SVG） ==========
-        if (data.svg_path) {
-          console.log("🎨 Loading SVG from:", data.svg_path);
-          const svgUrl = String(data.svg_path);
+        // 优先使用后端返回的 SVG 内容（直接字符串），如果没有则尝试从路径加载
+        if (data.svg_content) {
+          console.log("🎨 Loading SVG from content (length):", data.svg_content.length);
+          displayTextOnCanvasFromString(data.svg_content);
+        } else if (data.svg_path) {
+          console.log("🎨 Loading SVG from path:", data.svg_path);
+          // 添加时间戳避免浏览器缓存旧文件
+          const svgUrl = String(data.svg_path) + "?t=" + Date.now();
+          console.log("🎨 SVG URL with timestamp:", svgUrl);
           displayTextOnCanvas(svgUrl);
-          displayTextOnCanvas(data.svg_path);
         } else {
-          console.warn("⚠️ No svg_path returned from backend.");
+          console.warn("⚠️ No SVG content or path returned from backend.");
         }
       });
     });
@@ -409,28 +435,90 @@ function addSelectionTrigger() {
   select_boxes.value.push(current_box.value);
 }
 
-// ✅ 改进版：接受动态路径的函数
-function displayTextOnCanvas(svgPath = '/src/assets/canvas/word.svg') {
+// ✅ 从 SVG 字符串加载（推荐，用于远程服务器）
+function displayTextOnCanvasFromString(svgContent) {
+  console.log("🔄 [SVG] Loading SVG from string content");
+  if (!svgContent || svgContent.trim().length === 0) {
+    console.error("❌ [SVG] Empty SVG content");
+    return;
+  }
+  
+  fabric.loadSVGFromString(svgContent, function (objects, options) {
+    // 检查是否成功加载
+    if (!objects || objects.length === 0) {
+      console.warn("⚠️ [SVG] SVG loaded but no objects found");
+      return;
+    }
+    
+    console.log("✅ [SVG] SVG loaded successfully from string, objects count:", objects.length);
+    
+    try {
+      const svgObject = fabric.util.groupSVGElements(objects, options);
+      svgObject.id = "word";
+
+      // 删除旧的 word 图层
+      const oldObjs = canvas.c.getObjects();
+      const oldWordObjs = oldObjs.filter(o => o.id === "word");
+      console.log("🗑️ [SVG] Removing old word objects, count:", oldWordObjs.length);
+      oldWordObjs.forEach(o => {
+        canvas.c.remove(o);
+      });
+
+      // 自适应居中
+      const cw = canvas.c.getWidth();
+      const ch = canvas.c.getHeight();
+      const scale = 0.7 * Math.min(cw / svgObject.width, ch / svgObject.height);
+      svgObject.scale(scale);
+      svgObject.left = (cw - svgObject.width * scale) / 2;
+      svgObject.top = (ch - svgObject.height * scale) / 2;
+
+      canvas.c.add(svgObject);
+      canvas.c.renderAll();
+      console.log("✅ [SVG] SVG added to canvas and rendered successfully");
+    } catch (error) {
+      console.error("❌ [SVG] Error processing SVG objects:", error);
+    }
+  });
+}
+
+// ✅ 从 URL 路径加载（备用方案）
+function displayTextOnCanvas(svgPath = '/src/assets/canvas/word.svg' + "?t=" + Date.now()) {
+  console.log("🔄 [SVG] Loading SVG from path:", svgPath);
   fabric.loadSVGFromURL(svgPath, function (objects, options) {
-    const svgObject = fabric.util.groupSVGElements(objects, options);
-    svgObject.id = "word";
+    // 检查是否成功加载
+    if (!objects || objects.length === 0) {
+      console.warn("⚠️ [SVG] SVG loaded but no objects found");
+      return;
+    }
+    
+    console.log("✅ [SVG] SVG loaded successfully, objects count:", objects.length);
+    
+    try {
+      const svgObject = fabric.util.groupSVGElements(objects, options);
+      svgObject.id = "word";
 
-    // 删除旧的 word 图层
-    const oldObjs = canvas.c.getObjects();
-    oldObjs.forEach(o => {
-      if (o.id === "word") canvas.c.remove(o);
-    });
+      // 删除旧的 word 图层
+      const oldObjs = canvas.c.getObjects();
+      const oldWordObjs = oldObjs.filter(o => o.id === "word");
+      console.log("🗑️ [SVG] Removing old word objects, count:", oldWordObjs.length);
+      oldWordObjs.forEach(o => {
+        canvas.c.remove(o);
+      });
 
-    // 自适应居中
-    const cw = canvas.c.getWidth();
-    const ch = canvas.c.getHeight();
-    const scale = 0.7 * Math.min(cw / svgObject.width, ch / svgObject.height);
-    svgObject.scale(scale);
-    svgObject.left = (cw - svgObject.width * scale) / 2;
-    svgObject.top = (ch - svgObject.height * scale) / 2;
+      // 自适应居中
+      const cw = canvas.c.getWidth();
+      const ch = canvas.c.getHeight();
+      const scale = 0.7 * Math.min(cw / svgObject.width, ch / svgObject.height);
+      svgObject.scale(scale);
+      svgObject.left = (cw - svgObject.width * scale) / 2;
+      svgObject.top = (ch - svgObject.height * scale) / 2;
 
-    canvas.c.add(svgObject);
-    canvas.c.renderAll();
+      canvas.c.add(svgObject);
+      canvas.c.renderAll();
+      console.log("✅ [SVG] SVG added to canvas and rendered successfully");
+    } catch (error) {
+      console.error("❌ [SVG] Error processing SVG objects:", error);
+    }
   });
 }
 
@@ -589,10 +677,15 @@ function loadImageOrDisplay1() {
       };
 
       imageSegment(param, function (data) {
+        console.log("✅ [IMAGE Mode] Received data from backend:", data);
         const imgEl = document.createElement('img');
-        imgEl.src = data
-        // storeDesignPrior.shapeImage = data.shape
-        // storeDesignPrior.colorImage = data.color
+        // 确保使用后端返回的 base64 数据，不添加查询参数（base64 data URL 不需要）
+        const imageDataUrl = data.highlight || data;
+        if (!imageDataUrl) {
+          console.error("❌ No image data received from backend");
+          return;
+        }
+        imgEl.src = imageDataUrl;  // base64 data URL 不需要添加时间戳参数
         // 插入页面
         document.body.appendChild(imgEl);
         imgEl.onload = () => { // 必须要加onload，等图片加载完全，不然就是空的
@@ -724,10 +817,15 @@ function loadImageOrDisplay2() {
       };
 
       imageSegment(param, function (data) {
+        console.log("✅ [IMAGE Mode] Received data from backend:", data);
         const imgEl = document.createElement('img');
-        imgEl.src = data
-        // storeDesignPrior.shapeImage = data.shape
-        // storeDesignPrior.colorImage = data.color
+        // 确保使用后端返回的 base64 数据，不添加查询参数（base64 data URL 不需要）
+        const imageDataUrl = data.highlight || data;
+        if (!imageDataUrl) {
+          console.error("❌ No image data received from backend");
+          return;
+        }
+        imgEl.src = imageDataUrl;  // base64 data URL 不需要添加时间戳参数
         // 插入页面
         document.body.appendChild(imgEl);
         imgEl.onload = () => { // 必须要加onload，等图片加载完全，不然就是空的
@@ -859,10 +957,15 @@ function loadImageOrDisplay3() {
       };
 
       imageSegment(param, function (data) {
+        console.log("✅ [IMAGE Mode] Received data from backend:", data);
         const imgEl = document.createElement('img');
-        imgEl.src = data
-        // storeDesignPrior.shapeImage = data.shape
-        // storeDesignPrior.colorImage = data.color
+        // 确保使用后端返回的 base64 数据，不添加查询参数（base64 data URL 不需要）
+        const imageDataUrl = data.highlight || data;
+        if (!imageDataUrl) {
+          console.error("❌ No image data received from backend");
+          return;
+        }
+        imgEl.src = imageDataUrl;  // base64 data URL 不需要添加时间戳参数
         // 插入页面
         document.body.appendChild(imgEl);
         imgEl.onload = () => { // 必须要加onload，等图片加载完全，不然就是空的

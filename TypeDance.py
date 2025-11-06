@@ -3,6 +3,7 @@ from flask_cors import CORS
 import numpy as np
 import torch
 import os
+import time
 from pathlib import Path
 from PIL import Image
 import cv2
@@ -18,8 +19,12 @@ from transformers import CLIPProcessor, CLIPModel
 
 
 app = Flask(__name__)
-### CORS(app, resources={r'/*': {'origins': '*'}})   #防止cors跨域拦截，浏览器不允许前端端口 3000 的页面请求后端端口 88（因为跨域）。
-CORS(app, supports_credentials=True)
+# 配置 CORS，允许来自前端的跨域请求
+CORS(app, 
+     resources={r'/*': {'origins': ['http://localhost:3000', 'http://127.0.0.1:3000']}},
+     supports_credentials=True,
+     allow_headers=['Content-Type', 'Authorization'],
+     methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
 
 
 @app.route('/brainstorm',methods=['GET', 'POST'])
@@ -120,12 +125,18 @@ def image_view():
         img_contour = crop_element_from_RGBA(img_contour, mask_single_FLAG=False)
         img_contour.save("check/img_segment_contour.png")
 
-        return pil_to_data_uri(image_r)
+        # 统一返回 JSON 格式，与 word 模式保持一致
+        return jsonify({
+            "highlight": pil_to_data_uri(image_r)
+        })
 
     # ============ TYPEFACE 模式 ============
     if mode == "word":
         input_boxes = data["box"]
         print("🟦 input_boxes:", input_boxes)
+        
+        # 初始化 svg_content 变量
+        svg_content = None
 
         if isinstance(input_boxes[0], list):
             print("--ADD SELECTION--")
@@ -146,6 +157,46 @@ def image_view():
             # 高亮选中区域
             image_r, contours_g = highlight_mask(mask_merge, image, mode)
             image_r.save("check/img_segment.png")
+            
+            # === 生成剩余结构并转为 SVG（多选情况）===
+            inverse_mask = np.logical_not(mask_merge)
+            remaining_image = np.array(image)
+            remaining_image[~inverse_mask] = [255, 255, 255]  # 白底
+            remaining_pil = Image.fromarray(remaining_image)
+            remaining_pil.save("check/remaining_word.png")
+            
+            # 转为 SVG 文件
+            svg_path = "frontend/public/canvas/word_dynamic.svg"
+            
+            print("=" * 50)
+            print(f"🔄 [SVG] STEP 1: Calling img_to_svg_api to generate SVG (multi-selection)...")
+            print(f"🔄 [SVG] Input: check/remaining_word.png")
+            print(f"🔄 [SVG] Output: {svg_path}")
+            img_to_svg_api("check/remaining_word.png", svg_path)
+            print(f"🔄 [SVG] STEP 2: img_to_svg_api completed, checking file: {svg_path}")
+            print("=" * 50)
+            
+            # 检查文件是否存在
+            if os.path.exists(svg_path):
+                print(f"✅ [SVG] File exists (multi-selection), size: {os.path.getsize(svg_path)} bytes")
+            else:
+                print(f"❌ [SVG] File does not exist (multi-selection): {svg_path}")
+            
+            # 读取 SVG 文件内容
+            svg_content = None
+            try:
+                # 等待一小段时间确保文件写入完成
+                time.sleep(0.5)
+                
+                with open(svg_path, 'r', encoding='utf-8') as f:
+                    svg_content = f.read()
+                print(f"✅ [SVG] SVG content read successfully (multi-selection), length: {len(svg_content)}")
+            except FileNotFoundError as e:
+                print(f"❌ [SVG] File not found (multi-selection): {e}")
+                svg_content = None
+            except Exception as e:
+                print(f"❌ [SVG] Failed to read SVG file (multi-selection): {type(e).__name__}: {e}")
+                svg_content = None
 
         else:
             box = np.array([input_boxes[0], input_boxes[1], input_boxes[2], input_boxes[3]])
@@ -183,14 +234,59 @@ def image_view():
 
             # 转为 SVG 文件供前端加载，保存svg文件
             svg_path = "frontend/public/canvas/word_dynamic.svg"
+            
+            print("=" * 50)
+            print(f"🔄 [SVG] STEP 1: Calling img_to_svg_api to generate SVG...")
+            print(f"🔄 [SVG] Input: check/remaining_word.png")
+            print(f"🔄 [SVG] Output: {svg_path}")
             img_to_svg_api("check/remaining_word.png", svg_path)
-            print("SVG will be saved to:", svg_path)
+            print(f"🔄 [SVG] STEP 2: img_to_svg_api completed, checking file: {svg_path}")
+            print("=" * 50)
+            
+            # 检查文件是否存在
+            if os.path.exists(svg_path):
+                print(f"✅ [SVG] File exists, size: {os.path.getsize(svg_path)} bytes")
+            else:
+                print(f"❌ [SVG] File does not exist: {svg_path}")
+            
+            # 读取 SVG 文件内容并返回给前端
+            svg_content = None
+            try:
+                # 等待一小段时间确保文件写入完成
+                time.sleep(0.5)
+                
+                with open(svg_path, 'r', encoding='utf-8') as f:
+                    svg_content = f.read()
+                print(f"✅ [SVG] SVG content read successfully, length: {len(svg_content)}")
+            except FileNotFoundError as e:
+                print(f"❌ [SVG] File not found: {e}")
+                svg_content = None
+            except Exception as e:
+                print(f"❌ [SVG] Failed to read SVG file: {type(e).__name__}: {e}")
+                svg_content = None
 
-        # === 前端返回 JSON，包含高亮图 + SVG 路径 ===
-        return jsonify({
+        # === 前端返回 JSON，包含高亮图 + SVG 内容 ===
+        print("=" * 50)
+        print(f"🔄 [Response] Preparing response data...")
+        print(f"🔄 [Response] svg_content type: {type(svg_content)}, value: {svg_content is not None}")
+        
+        response_data = {
             "highlight": pil_to_data_uri(image_r),   # 左侧显示高亮笔画
-            "svg_path": "/canvas/word_dynamic.svg"  # 中央加载SVG
-        })
+            "svg_path": "/canvas/word_dynamic.svg",  # 保留路径用于兼容
+        }
+        
+        # 如果 SVG 内容存在，添加到响应中
+        if svg_content:
+            response_data["svg_content"] = svg_content
+            print(f"✅ [Response] SVG content included in response, length: {len(svg_content)}")
+        else:
+            print(f"⚠️ [Response] SVG content is None or empty, NOT included in response")
+            print(f"⚠️ [Response] This means frontend will try to load from path instead")
+        
+        print(f"🔄 [Response] Response keys: {list(response_data.keys())}")
+        print("=" * 50)
+        
+        return jsonify(response_data)
 
 
 
@@ -219,16 +315,21 @@ def image_extract():
 
     # ================= semantics =======================
     image_add_bg = add_bg_color(img_mask, color=[255, 255, 255])
-    # image 2 prompt
-    # clip-interrogator
-    config = Config(clip_model_name="ViT-L-14/openai")
-    ci = Interrogator(config)
-    prompt = ci.interrogate_fast(image_add_bg)
-    print(prompt)
-    # obtain the keyword
-    sentance = prompt.split(",")[0]
-    keyword = extract_keyword(sentance)
-    img_defalt_semantic = add_text_to_img(keyword)
+    # 尝试用 CLIP-Interrogator 获取语义；若离线或无法下载权重，则降级为占位结果，保证接口不失败
+    semantic_prompt = ""
+    try:
+        config = Config(clip_model_name="ViT-L-14/openai")
+        ci = Interrogator(config)
+        prompt = ci.interrogate_fast(image_add_bg)
+        print(prompt)
+        semantic_prompt = prompt
+        # obtain the keyword
+        sentance = prompt.split(",")[0]
+        keyword = extract_keyword(sentance)
+        img_defalt_semantic = add_text_to_img(keyword)
+    except Exception as e:
+        print("[WARN] CLIP Interrogator unavailable, fallback without semantics:", e)
+        img_defalt_semantic = add_text_to_img("Semantic")
     img_defalt_semantic.save("check/img_semantic.png")
 
     # ================= prepare material for wrap ================= 
