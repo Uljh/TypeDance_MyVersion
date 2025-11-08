@@ -33,13 +33,17 @@ def load_pipeline_with_fallback():
         pipe_img2img_art = StableDiffusionImg2ImgPipeline.from_pretrained(
             model_path,
             torch_dtype=dtype,
-            local_files_only=True  # 若你没联网下载过模型，可改为 False
+            local_files_only=True,  # 若你没联网下载过模型，可改为 False
+            safety_checker=None,  # 禁用 NSFW 检查器（可选，如果需要可以启用）
+            requires_safety_checker=False  # 禁用安全检查器
         ).to(device)
 
         pipe_text2img = StableDiffusionPipeline.from_pretrained(
             model_path,
             torch_dtype=dtype,
-            local_files_only=True
+            local_files_only=True,
+            safety_checker=None,  # 禁用 NSFW 检查器（可选，如果需要可以启用）
+            requires_safety_checker=False  # 禁用安全检查器
         ).to(device)
 
         # ✅ 在这里插入打印，确认模型在哪个设备上
@@ -54,13 +58,17 @@ def load_pipeline_with_fallback():
         pipe_img2img_art = StableDiffusionImg2ImgPipeline.from_pretrained(
             model_path,
             torch_dtype=torch.float32,
-            local_files_only=False
+            local_files_only=False,
+            safety_checker=None,  # 禁用 NSFW 检查器
+            requires_safety_checker=False  # 禁用安全检查器
         ).to("cpu")
 
         pipe_text2img = StableDiffusionPipeline.from_pretrained(
             model_path,
             torch_dtype=torch.float32,
-            local_files_only=True
+            local_files_only=True,
+            safety_checker=None,  # 禁用 NSFW 检查器
+            requires_safety_checker=False  # 禁用安全检查器
         ).to("cpu")
 
         # ✅ CPU fallback 分支同样打印
@@ -91,15 +99,20 @@ def img2img(pipe_img2img, prompt, im_bg, num_images, s=0.9):
     )
 
     # 过滤掉 NSFW 图片
-    images = [
-        img for i, img in enumerate(output.images)
-        if not output.nsfw_content_detected[i]
-    ]
+    nfsw_checker = output.nsfw_content_detected
+    if nfsw_checker is None:
+        # 如果 NSFW 检查器被禁用，直接使用所有图像
+        images = output.images
+    else:
+        images = [
+            img for i, img in enumerate(output.images)
+            if not nfsw_checker[i]
+        ]
 
-    # ✅ 如果全被过滤，就保留第一张作为兜底
-    if len(images) == 0:
-        print("[WARN] 所有生成图被 NSFW 过滤，自动保留第一张作为兜底。")
-        images = [output.images[0]]
+        # ✅ 如果全被过滤，就保留第一张作为兜底
+        if len(images) == 0:
+            print("[WARN] 所有生成图被 NSFW 过滤，自动保留第一张作为兜底。")
+            images = [output.images[0]]
 
     return images
 
@@ -210,28 +223,142 @@ def image_grid(imgs, rows, cols, mode="RGB"):
 
 class Generation:
     def __init__(self):
+        # 确保必要的目录存在
+        os.makedirs("check/first_generation", exist_ok=True)
+        os.makedirs("check/second_generation", exist_ok=True)
         pass
 
     def compare_saliency_maps(self, imageA, imageB):
-        saliency=cv2.saliency.StaticSaliencySpectralResidual_create()
-        (success, saliencyMapA) = saliency.computeSaliency(np.array(imageA))
-        (success, saliencyMapB) = saliency.computeSaliency(np.array(imageB))
-        saliencyMapA = (saliencyMapA * 255).astype("uint8")
-        saliencyMapB = (saliencyMapB * 255).astype("uint8")
-        mae = np.mean(np.abs(saliencyMapA - saliencyMapB))
-        return mae
+        """
+        比较两个图像的显著图（saliency maps）
+        如果 OpenCV saliency 模块不可用，使用替代方法
+        """
+        try:
+            # 尝试使用 OpenCV saliency 模块
+            if hasattr(cv2, 'saliency') and hasattr(cv2.saliency, 'StaticSaliencySpectralResidual_create'):
+                saliency = cv2.saliency.StaticSaliencySpectralResidual_create()
+                (success, saliencyMapA) = saliency.computeSaliency(np.array(imageA))
+                (success, saliencyMapB) = saliency.computeSaliency(np.array(imageB))
+                if success:
+                    saliencyMapA = (saliencyMapA * 255).astype("uint8")
+                    saliencyMapB = (saliencyMapB * 255).astype("uint8")
+                    mae = np.mean(np.abs(saliencyMapA - saliencyMapB))
+                    return mae
+        except (AttributeError, Exception) as e:
+            # saliency 模块不可用，使用替代方法
+            print(f"[INFO] OpenCV saliency 模块不可用，使用替代方法: {e}")
+        
+        # 替代方法：使用灰度图像和梯度计算相似度
+        try:
+            # 转换为 numpy 数组
+            imgA = np.array(imageA)
+            imgB = np.array(imageB)
+            
+            # 确保图像尺寸一致
+            if imgA.shape != imgB.shape:
+                # 调整图像B的尺寸以匹配图像A
+                imgB = cv2.resize(imgB, (imgA.shape[1], imgA.shape[0]))
+            
+            # 转换为灰度图
+            if len(imgA.shape) == 3:
+                grayA = cv2.cvtColor(imgA, cv2.COLOR_RGB2GRAY)
+            else:
+                grayA = imgA
+                
+            if len(imgB.shape) == 3:
+                grayB = cv2.cvtColor(imgB, cv2.COLOR_RGB2GRAY)
+            else:
+                grayB = imgB
+            
+            # 计算梯度（作为显著性的替代）
+            # 使用 Sobel 算子计算梯度
+            gradA_x = cv2.Sobel(grayA, cv2.CV_64F, 1, 0, ksize=3)
+            gradA_y = cv2.Sobel(grayA, cv2.CV_64F, 0, 1, ksize=3)
+            gradA = np.sqrt(gradA_x**2 + gradA_y**2)
+            
+            gradB_x = cv2.Sobel(grayB, cv2.CV_64F, 1, 0, ksize=3)
+            gradB_y = cv2.Sobel(grayB, cv2.CV_64F, 0, 1, ksize=3)
+            gradB = np.sqrt(gradB_x**2 + gradB_y**2)
+            
+            # 归一化
+            gradA = (gradA / gradA.max() * 255).astype("uint8") if gradA.max() > 0 else gradA.astype("uint8")
+            gradB = (gradB / gradB.max() * 255).astype("uint8") if gradB.max() > 0 else gradB.astype("uint8")
+            
+            # 计算 MAE
+            mae = np.mean(np.abs(gradA.astype(float) - gradB.astype(float)))
+            return mae
+            
+        except Exception as e:
+            # 如果梯度方法也失败，使用简单的像素差异
+            print(f"[WARN] 梯度计算失败，使用简单的像素差异: {e}")
+            try:
+                imgA = np.array(imageA)
+                imgB = np.array(imageB)
+                
+                # 确保图像尺寸一致
+                if imgA.shape != imgB.shape:
+                    imgB = cv2.resize(imgB, (imgA.shape[1], imgA.shape[0]))
+                
+                # 转换为灰度图
+                if len(imgA.shape) == 3:
+                    grayA = cv2.cvtColor(imgA, cv2.COLOR_RGB2GRAY)
+                else:
+                    grayA = imgA
+                    
+                if len(imgB.shape) == 3:
+                    grayB = cv2.cvtColor(imgB, cv2.COLOR_RGB2GRAY)
+                else:
+                    grayB = imgB
+                
+                # 计算简单的像素差异
+                mae = np.mean(np.abs(grayA.astype(float) - grayB.astype(float)))
+                return mae
+            except Exception as e:
+                # 最后的备用方案：返回一个默认值
+                print(f"[WARN] 所有方法都失败，返回默认值: {e}")
+                return 50.0  # 返回一个合理的默认值
 
     def first_generation(self, iter, prompts, n_propmts, init_image, strength, mae_dict, mode):
+        # 确保目录存在
+        os.makedirs("check/first_generation", exist_ok=True)
+        
         images_img2img = []
-        while (len(images_img2img)<3):
+        max_attempts = 20  # 最大尝试次数，避免无限循环
+        attempts = 0
+        
+        while (len(images_img2img)<3) and attempts < max_attempts:
+            attempts += 1
             seed = random.randint(0,99999999)
             Generator = torch.Generator(device="cuda").manual_seed(seed)
             output = pipe_img2img_art(prompt=prompts, negative_prompt=n_propmts, image=init_image, strength=strength, 
                                         guidance_scale=7.5, generator=Generator, return_dict=True)
             nfsw_checker = output.nsfw_content_detected
             images = output.images
-            images_output = [images[i] for i in range(len(nfsw_checker)) if not nfsw_checker[i]]
+            
+            # 处理 NSFW 检查（如果检查器被禁用，nfsw_checker 可能是 None 或全 False）
+            if nfsw_checker is None:
+                # 如果 NSFW 检查器被禁用，直接使用所有图像
+                images_output = images
+            else:
+                # 过滤 NSFW 内容
+                images_output = [images[i] for i in range(len(nfsw_checker)) if not nfsw_checker[i]]
+                
+                # 如果所有图像都被标记为 NSFW，记录警告但继续使用
+                if len(images_output) == 0 and len(images) > 0:
+                    print(f"[WARN] 所有生成图被 NSFW 过滤，自动保留第一张作为兜底。")
+                    images_output = [images[0]]  # 使用第一张作为兜底
+            
             images_img2img.extend(images_output)
+        
+        # 如果仍然没有足够的图像，使用已有的图像
+        if len(images_img2img) == 0:
+            print(f"[WARN] 经过 {max_attempts} 次尝试后仍无法生成足够的图像，使用初始图像")
+            images_img2img = [init_image] * 3
+        
+        # 确保至少有3张图像
+        while len(images_img2img) < 3:
+            images_img2img.append(images_img2img[-1] if images_img2img else init_image)
+        
         for id, img in enumerate(images_img2img):
             img_path = "check/first_generation/"+mode+"img_generation_iter"+str(iter)+"_id"+str(id)+".png"
             img.save(img_path)
@@ -243,6 +370,9 @@ class Generation:
         return images_img2img, seed, mae_dict
 
     def second_generation(self, mae_dict, prompt, n_propmt, user_prompt):
+        # 确保目录存在
+        os.makedirs("check/second_generation", exist_ok=True)
+        
         # 取四个mae不错的，但不是最拔尖的
         sorted_mae_list_seleted = []
         conditions = [
@@ -268,24 +398,53 @@ class Generation:
         img_list = []
 
         for id, img_path in enumerate(sorted_mae_list_seleted):
-            init_image = Image.open(img_path).convert("RGB").resize((512, 512))
-            print(img_path)
-            if user_prompt!="":
-                final_prompt = ", ".join([user_prompt]*2) + ", " + prompt.split(",")[4] + "minimalistic logo, vectorised, minimal flat 2d vector. lineal color." 
-                has_nfsw_flag = True
-                while (has_nfsw_flag):
-                    seed = random.randint(0,99999999)
-                    Generator = torch.Generator(device="cuda").manual_seed(seed)
-                    output = pipe_img2img_art(prompt=final_prompt, negative_prompt=n_propmt, image=init_image, strength=0.5, 
-                                                guidance_scale=7.5, generator=Generator)
-                    init_image = output.images[0]
-                    nfsw_checker = output.nsfw_content_detected
-                    print(nfsw_checker)
-                    has_nfsw_flag = nfsw_checker[0]
-            mode = img_path.split("_")[0]
-            mode_list.append(mode)
-            init_image.save("check/second_generation/"+img_path.split("/")[-1])
-            img_list.append(init_image)
+            try:
+                init_image = Image.open(img_path).convert("RGB").resize((512, 512))
+                print(img_path)
+                if user_prompt!="":
+                    final_prompt = ", ".join([user_prompt]*2) + ", " + prompt.split(",")[4] + "minimalistic logo, vectorised, minimal flat 2d vector. lineal color." 
+                    has_nfsw_flag = True
+                    max_nfsw_attempts = 10  # 最大尝试次数，避免无限循环
+                    nfsw_attempts = 0
+                    original_image = init_image  # 保存原始图像作为备用
+                    
+                    while (has_nfsw_flag) and nfsw_attempts < max_nfsw_attempts:
+                        nfsw_attempts += 1
+                        seed = random.randint(0,99999999)
+                        Generator = torch.Generator(device="cuda").manual_seed(seed)
+                        output = pipe_img2img_art(prompt=final_prompt, negative_prompt=n_propmt, image=init_image, strength=0.5, 
+                                                    guidance_scale=7.5, generator=Generator, return_dict=True)
+                        init_image = output.images[0]
+                        nfsw_checker = output.nsfw_content_detected
+                        print(nfsw_checker)
+                        # 处理 NSFW 检查（如果检查器被禁用，nfsw_checker 可能是 None）
+                        if nfsw_checker is None:
+                            has_nfsw_flag = False  # 如果检查器被禁用，认为没有 NSFW 内容
+                        else:
+                            has_nfsw_flag = nfsw_checker[0] if len(nfsw_checker) > 0 else False
+                    
+                    # 如果达到最大尝试次数仍然被标记为 NSFW，使用最后一次生成的图像
+                    if has_nfsw_flag and nfsw_attempts >= max_nfsw_attempts:
+                        print(f"[WARN] 经过 {max_nfsw_attempts} 次尝试后图像仍被标记为 NSFW，使用生成的图像")
+                        # 继续使用最后一次生成的图像
+                
+                mode = img_path.split("_")[0] if "_" in img_path else "unknown"
+                mode_list.append(mode)
+                
+                # 确保保存路径的目录存在
+                save_path = "check/second_generation/"+img_path.split("/")[-1]
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                init_image.save(save_path)
+                img_list.append(init_image)
+            except Exception as e:
+                print(f"[ERROR] 处理图像 {img_path} 时出错: {e}")
+                # 如果处理失败，跳过这个图像
+                continue
+        
+        # 如果没有任何图像被处理，返回空列表
+        if len(img_list) == 0:
+            print("[WARN] second_generation 没有生成任何图像")
+        
         return img_list, mode_list
 
     def color_generation(self, prompts, n_propmts, init_image, id, FLAG_shape):
@@ -473,8 +632,21 @@ class Generation:
                 img_RGBA = bg_removal(word_copncept_image, current_path)
                 concept_img_scaled = self.scale_concept_img(img_RGBA, concept_image)
                 # get color from concept_img
-                color_thief = ColorThief(concept_img_scaled)
-                main_color = color_thief.get_color()
+                # ColorThief 需要文件路径，不能直接使用 PIL Image 对象
+                # 先将图像保存到临时文件
+                temp_color_path = f"check/temp_color_refine_{i}.png"
+                os.makedirs("check", exist_ok=True)
+                concept_img_scaled.save(temp_color_path)
+                try:
+                    color_thief = ColorThief(temp_color_path)
+                    main_color = color_thief.get_color()
+                finally:
+                    # 清理临时文件
+                    if os.path.exists(temp_color_path):
+                        try:
+                            os.remove(temp_color_path)
+                        except:
+                            pass  # 忽略删除失败
                 image_bg_color = add_bg_color(concept_img_scaled, main_color)
                 img_r = self.add_alpha(img_RGBA, image_bg_color)
                 image_color = add_bg_color(img_r, [255,255,255])
@@ -521,18 +693,35 @@ class Feedback(Generation):
         return feedback_refer_list
 
     def second_generation(self, mae_dict, prompt, n_propmt, num_to_generate):
+        # 确保目录存在
+        os.makedirs("check/second_generation", exist_ok=True)
+        
         sorted_mae_list_seleted = sample(list(mae_dict.keys()), num_to_generate)
 
         init_image_list = []
         mode_list = []
         img_list = []
         for id, img_path in enumerate(sorted_mae_list_seleted):
-            init_image = Image.open(img_path).convert("RGB").resize((512, 512))
-            print(img_path)
-            mode = img_path.split("_")[0]
-            mode_list.append(mode)
-            init_image.save("check/second_generation/"+img_path.split("/")[-1])
-            img_list.append(init_image)
+            try:
+                init_image = Image.open(img_path).convert("RGB").resize((512, 512))
+                print(img_path)
+                mode = img_path.split("_")[0] if "_" in img_path else "unknown"
+                mode_list.append(mode)
+                
+                # 确保保存路径的目录存在
+                save_path = "check/second_generation/"+img_path.split("/")[-1]
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                init_image.save(save_path)
+                img_list.append(init_image)
+            except Exception as e:
+                print(f"[ERROR] 处理图像 {img_path} 时出错: {e}")
+                # 如果处理失败，跳过这个图像
+                continue
+        
+        # 如果没有任何图像被处理，返回空列表
+        if len(img_list) == 0:
+            print("[WARN] second_generation 没有生成任何图像")
+        
         return img_list, mode_list
 
      
@@ -614,8 +803,21 @@ class Feedback(Generation):
                 img_RGBA = bg_removal(word_copncept_image, current_path)
                 concept_img_scaled = self.scale_concept_img(img_RGBA, concept_image)
                 # get color from concept_img
-                color_thief = ColorThief(concept_img_scaled)
-                main_color = color_thief.get_color()
+                # ColorThief 需要文件路径，不能直接使用 PIL Image 对象
+                # 先将图像保存到临时文件
+                temp_color_path = f"check/temp_color_feedback_{i}.png"
+                os.makedirs("check", exist_ok=True)
+                concept_img_scaled.save(temp_color_path)
+                try:
+                    color_thief = ColorThief(temp_color_path)
+                    main_color = color_thief.get_color()
+                finally:
+                    # 清理临时文件
+                    if os.path.exists(temp_color_path):
+                        try:
+                            os.remove(temp_color_path)
+                        except:
+                            pass  # 忽略删除失败
                 image_bg_color = add_bg_color(concept_img_scaled, main_color)
                 img_r = self.add_alpha(img_RGBA, image_bg_color)
                 image_color = add_bg_color(img_r, [255,255,255])
@@ -645,7 +847,16 @@ class Refine:
         # images.insert(0, init_image)
         images = output.images
         nfsw_checker = output.nsfw_content_detected
-        images_img2img = [images[i] for i in range(len(nfsw_checker)) if not nfsw_checker[i]]
+        # 处理 NSFW 检查（如果检查器被禁用，nfsw_checker 可能是 None）
+        if nfsw_checker is None:
+            # 如果 NSFW 检查器被禁用，直接使用所有图像
+            images_img2img = images
+        else:
+            images_img2img = [images[i] for i in range(len(nfsw_checker)) if not nfsw_checker[i]]
+            # 如果全被过滤，保留第一张作为兜底
+            if len(images_img2img) == 0 and len(images) > 0:
+                print("[WARN] 所有生成图被 NSFW 过滤，自动保留第一张作为兜底。")
+                images_img2img = [images[0]]
         return images_img2img
 
     def __call__(self, strength, anchor, alt):

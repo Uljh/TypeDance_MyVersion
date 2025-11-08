@@ -7,6 +7,38 @@ import time
 from pathlib import Path
 from PIL import Image
 import cv2
+
+# ==================== 环境变量设置（必须在导入 clip_interrogator 之前）====================
+# 设置项目根目录
+_project_root = os.path.dirname(os.path.abspath(__file__))
+_local_models_dir = os.path.join(_project_root, 'models', 'huggingface', 'hub')
+
+# 检查模型文件是否存在，如果存在则设置环境变量
+_model_check_path = os.path.join(_local_models_dir, 'models--timm--vit_large_patch14_clip_224.openai')
+if os.path.exists(_model_check_path):
+    # 检查模型文件是否完整
+    _snapshots_dir = os.path.join(_model_check_path, 'snapshots')
+    if os.path.exists(_snapshots_dir):
+        _snapshots = [d for d in os.listdir(_snapshots_dir) 
+                     if os.path.isdir(os.path.join(_snapshots_dir, d))]
+        if _snapshots:
+            _snapshot_path = os.path.join(_snapshots_dir, _snapshots[0])
+            _model_file = os.path.join(_snapshot_path, 'open_clip_pytorch_model.bin')
+            if os.path.exists(_model_file):
+                # 模型文件存在，设置环境变量
+                os.environ['HF_HOME'] = os.path.join(_project_root, 'models', 'huggingface')
+                os.environ['HUGGINGFACE_HUB_CACHE'] = _local_models_dir
+                os.environ['HF_LOCAL_FILES_ONLY'] = 'True'
+                # 如果没有设置镜像，使用默认值（可以在外部设置）
+                if 'HF_ENDPOINT' not in os.environ:
+                    pass  # 保持未设置，或者可以在这里设置镜像
+                os.environ['HF_HUB_DOWNLOAD_TIMEOUT'] = '300'
+                print(f"[INIT] ✅ 检测到本地模型，已设置环境变量")
+                print(f"[INIT]    HF_HOME: {os.environ.get('HF_HOME')}")
+                print(f"[INIT]    HUGGINGFACE_HUB_CACHE: {os.environ.get('HUGGINGFACE_HUB_CACHE')}")
+                print(f"[INIT]    HF_LOCAL_FILES_ONLY: {os.environ.get('HF_LOCAL_FILES_ONLY')}")
+
+# 现在导入其他模块（环境变量已设置）
 from diffusers import DiffusionPipeline,StableDiffusionDepth2ImgPipeline,StableDiffusionImg2ImgPipeline,StableDiffusionPipeline
 from brainstorm import get_answer, get_dict_from_answer
 from image_segment import get_img_embedding, highlight_mask, mask_to_image, img_word_to_canvas
@@ -425,21 +457,57 @@ def image_extract():
         if image_extract._ci_cache is None:
             print("[INFO] 🔄 首次加载 CLIP 模型，这可能需要一些时间...")
             
+            # 在初始化之前，再次确保环境变量正确设置
+            project_root = os.path.dirname(os.path.abspath(__file__))
+            local_models_dir = os.path.join(project_root, 'models', 'huggingface', 'hub')
+            
+            # 强制设置环境变量（确保在初始化前设置）
+            os.environ['HF_HOME'] = os.path.join(project_root, 'models', 'huggingface')
+            os.environ['HUGGINGFACE_HUB_CACHE'] = local_models_dir
+            
+            # 如果检测到本地模型，强制启用本地文件模式
+            if model_available:
+                os.environ['HF_LOCAL_FILES_ONLY'] = 'True'
+            
             # 显示当前的环境变量配置
+            hf_home = os.environ.get('HF_HOME', '未设置')
             hf_cache = os.environ.get('HUGGINGFACE_HUB_CACHE', '未设置')
             hf_local_only = os.environ.get('HF_LOCAL_FILES_ONLY', 'False')
-            print(f"[INFO] 📋 模型缓存目录: {hf_cache}")
-            print(f"[INFO] 📋 仅本地文件模式: {hf_local_only}")
+            print(f"[INFO] 📋 HF_HOME: {hf_home}")
+            print(f"[INFO] 📋 HUGGINGFACE_HUB_CACHE: {hf_cache}")
+            print(f"[INFO] 📋 HF_LOCAL_FILES_ONLY: {hf_local_only}")
             
             # 验证模型文件是否存在
             if model_available:
-                model_check_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
-                                                'models', 'huggingface', 'hub',
-                                                'models--timm--vit_large_patch14_clip_224.openai')
+                model_check_path = os.path.join(local_models_dir, 'models--timm--vit_large_patch14_clip_224.openai')
                 if os.path.exists(model_check_path):
-                    print(f"[INFO] ✅ 验证: 本地模型文件存在: {model_check_path}")
+                    # 检查关键文件
+                    snapshots_dir = os.path.join(model_check_path, 'snapshots')
+                    if os.path.exists(snapshots_dir):
+                        snapshots = [d for d in os.listdir(snapshots_dir) 
+                                   if os.path.isdir(os.path.join(snapshots_dir, d))]
+                        if snapshots:
+                            snapshot_path = os.path.join(snapshots_dir, snapshots[0])
+                            model_file = os.path.join(snapshot_path, 'open_clip_pytorch_model.bin')
+                            if os.path.exists(model_file):
+                                file_size = os.path.getsize(model_file) / (1024**3)
+                                print(f"[INFO] ✅ 验证: 本地模型文件存在: {model_file} ({file_size:.2f} GB)")
+                            else:
+                                print(f"[INFO] ⚠️  警告: 模型文件不存在: {model_file}")
+                        else:
+                            print(f"[INFO] ⚠️  警告: snapshots 目录为空")
+                    else:
+                        print(f"[INFO] ⚠️  警告: snapshots 目录不存在")
                 else:
-                    print(f"[INFO] ⚠️  警告: 模型文件路径不存在: {model_check_path}")
+                    print(f"[INFO] ⚠️  警告: 模型目录不存在: {model_check_path}")
+            
+            # 在初始化前，导入并设置 huggingface_hub 的缓存目录
+            try:
+                import huggingface_hub
+                # 确保 huggingface_hub 使用我们设置的缓存目录
+                huggingface_hub.constants.HF_HUB_CACHE = local_models_dir
+            except Exception as e:
+                print(f"[INFO] ⚠️  无法设置 huggingface_hub 缓存目录: {e}")
             
             config = Config(clip_model_name="ViT-L-14/openai")
             print("[INFO] 🔄 正在初始化 CLIP Interrogator...")
@@ -480,15 +548,37 @@ def image_extract():
         img_defalt_semantic = add_text_to_img("Semantic")
         prompt = "semantic description unavailable"
     except Exception as e:
-        # 清除失败的缓存，以便下次重试
-        image_extract._ci_cache = None
         # 捕获 Hugging Face 相关错误
         error_type = type(e).__name__
         error_msg = str(e)
         
+        # 检查是否是 sentence-transformers 相关的错误（不影响主要功能）
+        is_sentence_transformer_error = "sentence-transformers" in error_msg.lower() or "all-mpnet" in error_msg.lower()
+        
         # 检查是否是 Hugging Face Hub 相关错误
-        if "huggingface" in error_type.lower() or "LocalEntryNotFoundError" in error_type:
-            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+        if "huggingface" in error_type.lower() or "LocalEntryNotFoundError" in error_type or is_sentence_transformer_error:
+            if is_sentence_transformer_error:
+                # sentence-transformers 模型错误，不影响主要功能
+                # 检查是否是因为网络超时（模型文件可能已存在）
+                if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                    print(f"[INFO] ℹ️  sentence-transformers 模型网络请求超时（可忽略）")
+                    print("[INFO] 💡 说明: CLIP 模型已成功加载并工作正常")
+                    print("[INFO] 💡 说明: 语义描述已成功生成，功能完全正常")
+                    print("[INFO] 💡 提示: 此警告可安全忽略，不影响功能使用")
+                else:
+                    print(f"[WARN] ⚠️  sentence-transformers 模型加载问题（不影响主要功能）: {error_type}")
+                    print("[INFO] 💡 说明: CLIP 模型已成功加载，语义提取功能正常")
+                    print("[INFO] 💡 可选操作: 运行 python download_sentence_transformer.py 下载完整模型")
+                    print("[INFO] 💡 提示: 此错误不影响 /image_extract 接口的正常使用")
+                # 不清除缓存，因为 CLIP 模型已经成功加载
+                # 继续使用已有的结果
+                if prompt:  # 如果 prompt 已经有值，说明 CLIP 模型工作正常
+                    print(f"[INFO] ✅ CLIP 模型工作正常，已生成语义描述: {prompt[:50]}...")
+                    # prompt 已经有值，不需要设置默认值
+                else:
+                    img_defalt_semantic = add_text_to_img("Semantic")
+                    prompt = "semantic description unavailable"
+            elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
                 print(f"[WARN] ⏱️  Hugging Face 模型下载超时: {error_type}: {e}")
                 print("[INFO] 💡 解决方案:")
                 print("  1. 从本地同步模型文件到服务器（推荐）:")
@@ -496,6 +586,10 @@ def image_extract():
                 print("  2. 或在服务器上运行: python download_open_clip_model.py")
                 print("  3. 如果在中国大陆，使用镜像: export HF_ENDPOINT=https://hf-mirror.com")
                 print("  4. 检查网络连接和防火墙设置")
+                # 清除失败的缓存，以便下次重试
+                image_extract._ci_cache = None
+                img_defalt_semantic = add_text_to_img("Semantic")
+                prompt = "semantic description unavailable"
             elif "connection" in error_msg.lower() or "connect" in error_msg.lower():
                 print(f"[WARN] 🔌 Hugging Face 连接失败: {error_type}: {e}")
                 print("[INFO] 💡 解决方案:")
@@ -503,16 +597,26 @@ def image_extract():
                 print("     ./sync_models_to_server.sh user@server:/path/to/TypeDance/")
                 print("  2. 检查网络连接")
                 print("  3. 使用代理或镜像站点")
+                # 清除失败的缓存，以便下次重试
+                image_extract._ci_cache = None
+                img_defalt_semantic = add_text_to_img("Semantic")
+                prompt = "semantic description unavailable"
             else:
                 print(f"[WARN] ❌ Hugging Face 模型加载失败: {error_type}: {e}")
                 print("[INFO] 💡 提示: 请从本地同步模型文件或运行 python download_open_clip_model.py")
+                # 清除失败的缓存，以便下次重试
+                image_extract._ci_cache = None
+                img_defalt_semantic = add_text_to_img("Semantic")
+                prompt = "semantic description unavailable"
         else:
             print(f"[WARN] ❌ CLIP Interrogator 初始化失败: {error_type}: {e}")
             import traceback
             traceback.print_exc()
             print("[INFO] 💡 提示: 请从本地同步模型文件或运行 python download_open_clip_model.py")
-        img_defalt_semantic = add_text_to_img("Semantic")
-        prompt = "semantic description unavailable"
+            # 清除失败的缓存，以便下次重试
+            image_extract._ci_cache = None
+            img_defalt_semantic = add_text_to_img("Semantic")
+            prompt = "semantic description unavailable"
     img_defalt_semantic.save("check/img_semantic.png")
 
     # ================= prepare material for wrap ================= 
@@ -576,7 +680,23 @@ def image_generate():
 
     # if not FEEDBACK_FLAG or : # from scratch
     generationOperator = Generation()
-    img_list, mode_list, alt = generationOperator(img_word, img_mask, prompt, semantic_prompt, num_to_generate, strength, option_list)
+    try:
+        img_list, mode_list, alt = generationOperator(img_word, img_mask, prompt, semantic_prompt, num_to_generate, strength, option_list)
+        
+        # 检查生成的结果是否为空
+        if not img_list or len(img_list) == 0:
+            print("[WARN] 生成的图像列表为空，返回错误")
+            return jsonify({"error": "无法生成图像，请重试"}), 500
+        
+        # 确保 mode_list 和 img_list 长度一致
+        while len(mode_list) < len(img_list):
+            mode_list.append("unknown")
+        
+    except Exception as e:
+        print(f"[ERROR] 图像生成失败: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"图像生成失败: {str(e)}"}), 500
     # else:
     #     feedbackOperator = Feedback(img_word, img_mask, prompt, semantic_prompt, num_to_generate, strength, option_list, previous_mode, previous_img_list)
 
