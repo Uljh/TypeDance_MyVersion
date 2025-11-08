@@ -17,6 +17,103 @@ from generate import Generation
 from generate import Generation, Feedback, Refine
 from transformers import CLIPProcessor, CLIPModel
 
+# ==================== 模型配置和初始化 ====================
+def setup_model_cache():
+    """配置模型缓存目录，优先使用项目本地目录"""
+    # 1. 优先使用项目本地模型目录
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    local_models_dir = os.path.join(project_root, 'models', 'huggingface', 'hub')
+    
+    # 2. 系统默认缓存目录
+    default_cache = os.path.expanduser('~/.cache/huggingface')
+    
+    # 3. 检查模型文件是否存在
+    model_check_path = os.path.join(local_models_dir, 'models--timm--vit_large_patch14_clip_224.openai')
+    
+    if os.path.exists(model_check_path):
+        # 进一步检查模型文件是否完整（检查关键文件）
+        snapshots_dir = os.path.join(model_check_path, 'snapshots')
+        model_file_found = False
+        
+        if os.path.exists(snapshots_dir):
+            # 检查 snapshots 目录下是否有模型文件
+            for item in os.listdir(snapshots_dir):
+                snapshot_path = os.path.join(snapshots_dir, item)
+                if os.path.isdir(snapshot_path):
+                    model_file = os.path.join(snapshot_path, 'open_clip_pytorch_model.bin')
+                    safetensors_file = os.path.join(snapshot_path, 'open_clip_model.safetensors')
+                    if os.path.exists(model_file) or os.path.exists(safetensors_file):
+                        model_file_found = True
+                        # 检查文件大小是否合理（至少 100MB）
+                        if os.path.exists(model_file):
+                            file_size = os.path.getsize(model_file)
+                            if file_size < 100 * 1024 * 1024:  # 小于 100MB 可能不完整
+                                print(f"[INFO] ⚠️  警告: 模型文件可能不完整 ({file_size / (1024**2):.2f} MB)")
+                        break
+        
+        if model_file_found:
+            # 使用项目本地模型
+            os.environ['HF_HOME'] = os.path.join(project_root, 'models', 'huggingface')
+            os.environ['HUGGINGFACE_HUB_CACHE'] = local_models_dir
+            print(f"[INFO] ✅ 使用项目本地模型缓存: {local_models_dir}")
+            return True
+        else:
+            print(f"[INFO] ⚠️  模型目录存在但未找到完整的模型文件")
+            print(f"[INFO] 将尝试从网络下载或使用系统缓存")
+            os.environ['HF_HOME'] = os.path.join(project_root, 'models', 'huggingface')
+            os.environ['HUGGINGFACE_HUB_CACHE'] = local_models_dir
+            return False
+    elif os.path.exists(local_models_dir):
+        # 目录存在但模型文件不完整
+        os.environ['HF_HOME'] = os.path.join(project_root, 'models', 'huggingface')
+        os.environ['HUGGINGFACE_HUB_CACHE'] = local_models_dir
+        print(f"[INFO] ⚠️  项目模型目录存在但模型文件可能不完整: {local_models_dir}")
+        print(f"[INFO] 将尝试从网络下载或使用系统缓存")
+        return False
+    elif os.path.exists(default_cache):
+        # 使用系统默认缓存
+        os.environ['HF_HOME'] = default_cache
+        print(f"[INFO] ℹ️  使用系统默认 Hugging Face 缓存: {default_cache}")
+        print(f"[INFO] 提示: 建议运行 python download_open_clip_model.py 下载到项目目录")
+        return False
+    else:
+        # 没有找到任何缓存目录
+        print(f"[INFO] ⚠️  未找到模型缓存目录")
+        print(f"[INFO] 将尝试下载模型到: {local_models_dir}")
+        # 创建目录
+        os.makedirs(local_models_dir, exist_ok=True)
+        os.environ['HF_HOME'] = os.path.join(project_root, 'models', 'huggingface')
+        os.environ['HUGGINGFACE_HUB_CACHE'] = local_models_dir
+        return False
+
+# 配置模型缓存
+model_available = setup_model_cache()
+
+# 增加超时时间（秒）
+os.environ['HF_HUB_DOWNLOAD_TIMEOUT'] = '300'  # 5分钟
+
+# 如果检测到本地模型文件，自动启用本地文件模式，避免网络下载
+# 这样可以强制 open_clip 只使用本地缓存，不会尝试从 Hugging Face Hub 下载
+if model_available:
+    # 检测到本地模型文件，强制使用本地文件模式
+    os.environ['HF_LOCAL_FILES_ONLY'] = 'True'
+    print("[INFO] 🔒 检测到本地模型文件，已自动启用仅使用本地文件模式")
+else:
+    # 检查是否手动设置了 HF_LOCAL_FILES_ONLY
+    USE_LOCAL_FILES_ONLY = os.environ.get('HF_LOCAL_FILES_ONLY', 'False').lower() == 'true'
+    if USE_LOCAL_FILES_ONLY:
+        print("[INFO] 🔒 已启用仅使用本地文件模式（手动设置）")
+        print("[WARN] ⚠️  警告: 启用本地文件模式但模型文件可能不存在，可能会失败")
+
+# 支持 Hugging Face 镜像站点（适用于中国大陆用户）
+# 如果设置了 HF_ENDPOINT 环境变量，将使用该镜像
+if 'HF_ENDPOINT' not in os.environ:
+    # 可以在这里设置默认镜像，例如：
+    # os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'  # 取消注释以使用镜像
+    pass
+else:
+    print(f"[INFO] 使用 Hugging Face 镜像: {os.environ.get('HF_ENDPOINT')}")
+
 
 app = Flask(__name__)
 # 配置 CORS，允许来自前端的跨域请求
@@ -317,19 +414,105 @@ def image_extract():
     image_add_bg = add_bg_color(img_mask, color=[255, 255, 255])
     # 尝试用 CLIP-Interrogator 获取语义；若离线或无法下载权重，则降级为占位结果，保证接口不失败
     semantic_prompt = ""
+    prompt = ""  # 初始化为空字符串，避免未定义错误
+    
+    # 使用全局变量缓存 Interrogator 实例，避免重复加载
+    if not hasattr(image_extract, '_ci_cache'):
+        image_extract._ci_cache = None
+    
     try:
-        config = Config(clip_model_name="ViT-L-14/openai")
-        ci = Interrogator(config)
+        # 如果还没有加载模型，则加载
+        if image_extract._ci_cache is None:
+            print("[INFO] 🔄 首次加载 CLIP 模型，这可能需要一些时间...")
+            
+            # 显示当前的环境变量配置
+            hf_cache = os.environ.get('HUGGINGFACE_HUB_CACHE', '未设置')
+            hf_local_only = os.environ.get('HF_LOCAL_FILES_ONLY', 'False')
+            print(f"[INFO] 📋 模型缓存目录: {hf_cache}")
+            print(f"[INFO] 📋 仅本地文件模式: {hf_local_only}")
+            
+            # 验证模型文件是否存在
+            if model_available:
+                model_check_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                                                'models', 'huggingface', 'hub',
+                                                'models--timm--vit_large_patch14_clip_224.openai')
+                if os.path.exists(model_check_path):
+                    print(f"[INFO] ✅ 验证: 本地模型文件存在: {model_check_path}")
+                else:
+                    print(f"[INFO] ⚠️  警告: 模型文件路径不存在: {model_check_path}")
+            
+            config = Config(clip_model_name="ViT-L-14/openai")
+            print("[INFO] 🔄 正在初始化 CLIP Interrogator...")
+            image_extract._ci_cache = Interrogator(config)
+            print("[INFO] ✅ CLIP 模型加载成功")
+        else:
+            print("[INFO] ♻️  使用已缓存的 CLIP 模型")
+        
+        ci = image_extract._ci_cache
+        print("[INFO] 🎨 正在生成语义描述...")
         prompt = ci.interrogate_fast(image_add_bg)
-        print(prompt)
+        print(f"[INFO] 📝 CLIP Interrogator prompt: {prompt}")
         semantic_prompt = prompt
         # obtain the keyword
         sentance = prompt.split(",")[0]
         keyword = extract_keyword(sentance)
         img_defalt_semantic = add_text_to_img(keyword)
-    except Exception as e:
-        print("[WARN] CLIP Interrogator unavailable, fallback without semantics:", e)
+    except (FileNotFoundError, ConnectionError, TimeoutError, OSError) as e:
+        # 清除失败的缓存，以便下次重试
+        image_extract._ci_cache = None
+        error_msg = str(e)
+        if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+            print(f"[WARN] ⏱️  CLIP 模型下载超时: {e}")
+            print("[INFO] 💡 解决方案:")
+            print("  1. 从本地同步模型文件到服务器（推荐）:")
+            print("     ./sync_models_to_server.sh user@server:/path/to/TypeDance/")
+            print("  2. 或在服务器上运行: python download_open_clip_model.py")
+            print("  3. 如果在中国大陆，使用镜像: export HF_ENDPOINT=https://hf-mirror.com")
+        elif "connection" in error_msg.lower():
+            print(f"[WARN] 🔌 CLIP 模型连接失败: {e}")
+            print("[INFO] 💡 解决方案:")
+            print("  1. 从本地同步模型文件到服务器（推荐）:")
+            print("     ./sync_models_to_server.sh user@server:/path/to/TypeDance/")
+            print("  2. 检查网络连接")
+            print("  3. 使用本地模型缓存（如果已下载）")
+        else:
+            print(f"[WARN] ❌ CLIP Interrogator 文件/连接错误: {e}")
         img_defalt_semantic = add_text_to_img("Semantic")
+        prompt = "semantic description unavailable"
+    except Exception as e:
+        # 清除失败的缓存，以便下次重试
+        image_extract._ci_cache = None
+        # 捕获 Hugging Face 相关错误
+        error_type = type(e).__name__
+        error_msg = str(e)
+        
+        # 检查是否是 Hugging Face Hub 相关错误
+        if "huggingface" in error_type.lower() or "LocalEntryNotFoundError" in error_type:
+            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                print(f"[WARN] ⏱️  Hugging Face 模型下载超时: {error_type}: {e}")
+                print("[INFO] 💡 解决方案:")
+                print("  1. 从本地同步模型文件到服务器（推荐）:")
+                print("     ./sync_models_to_server.sh user@server:/path/to/TypeDance/")
+                print("  2. 或在服务器上运行: python download_open_clip_model.py")
+                print("  3. 如果在中国大陆，使用镜像: export HF_ENDPOINT=https://hf-mirror.com")
+                print("  4. 检查网络连接和防火墙设置")
+            elif "connection" in error_msg.lower() or "connect" in error_msg.lower():
+                print(f"[WARN] 🔌 Hugging Face 连接失败: {error_type}: {e}")
+                print("[INFO] 💡 解决方案:")
+                print("  1. 从本地同步模型文件到服务器（推荐）:")
+                print("     ./sync_models_to_server.sh user@server:/path/to/TypeDance/")
+                print("  2. 检查网络连接")
+                print("  3. 使用代理或镜像站点")
+            else:
+                print(f"[WARN] ❌ Hugging Face 模型加载失败: {error_type}: {e}")
+                print("[INFO] 💡 提示: 请从本地同步模型文件或运行 python download_open_clip_model.py")
+        else:
+            print(f"[WARN] ❌ CLIP Interrogator 初始化失败: {error_type}: {e}")
+            import traceback
+            traceback.print_exc()
+            print("[INFO] 💡 提示: 请从本地同步模型文件或运行 python download_open_clip_model.py")
+        img_defalt_semantic = add_text_to_img("Semantic")
+        prompt = "semantic description unavailable"
     img_defalt_semantic.save("check/img_semantic.png")
 
     # ================= prepare material for wrap ================= 
