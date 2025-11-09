@@ -21,25 +21,86 @@ with open('my_key.yaml', 'r') as file:
 key = data.get('openai_api_key', None)
 openai.api_key = key
 
+# def img_to_svg_api(img_path, output_path):
+#     import requests, os
+#     os.makedirs(os.path.dirname(output_path), exist_ok=True)
+#
+#     response = requests.post(
+#         'https://vectorizer.ai/api/v1/vectorize',
+#         files={'image': open(img_path, 'rb')},
+#         data={
+#             "mode": "test"   # ✅ 启用测试模式（不会消耗额度）
+#         },
+#         auth=('vkelh6g2zcrtjvl', 'tgb8allm0ge4sm5ea2tiufn6uj7ekiqlsabms0nm1s3tj7g0oonb')
+#     )
+#
+#     if response.status_code == requests.codes.ok:
+#         with open(output_path, 'wb') as out:
+#             out.write(response.content)
+#         print(f"✅ SVG 文件已保存到: {output_path}")
+#     else:
+#         print("❌ 请求失败:", response.status_code, response.text)
 def img_to_svg_api(img_path, output_path):
-    import requests, os
+    """
+    将输入图片转换为 SVG 矢量图（使用 libolibo API）。
+    ✅ 无需修改调用处参数。
+    """
+    import requests, os, yaml
+
+    # 从 my_key.yaml 读取 API Key（推荐方式）
+    api_key = None
+    try:
+        with open('my_key.yaml', 'r') as file:
+            data = yaml.safe_load(file)
+            api_key = data.get('libolibo_api_key', None)
+    except Exception as e:
+        print(f"⚠️ 无法读取 my_key.yaml: {e}")
+
+    if not api_key:
+        print("❌ 未找到 libolibo_api_key，请在 my_key.yaml 中添加：libolibo_api_key: 'your_api_key_here'")
+        return
+
+    # 创建输出目录
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    response = requests.post(
-        'https://vectorizer.ai/api/v1/vectorize',
-        files={'image': open(img_path, 'rb')},
-        data={
-            "mode": "test"   # ✅ 启用测试模式（不会消耗额度）
-        },
-        auth=('vkelh6g2zcrtjvl', 'tgb8allm0ge4sm5ea2tiufn6uj7ekiqlsabms0nm1s3tj7g0oonb')
-    )
+    # 构建请求
+    url = "https://admin.libolibo.cn/api/v1/convert"
+    headers = {
+        "X-API-Key": api_key
+    }
+    files = {
+        "file": open(img_path, "rb")
+    }
+    data = {
+        "vectorFormat": ".svg"
+    }
 
-    if response.status_code == requests.codes.ok:
-        with open(output_path, 'wb') as out:
-            out.write(response.content)
-        print(f"✅ SVG 文件已保存到: {output_path}")
+    # 发送请求
+    response = requests.post(url, headers=headers, files=files, data=data)
+
+    # 处理响应
+    if response.status_code == 200:
+        try:
+            result = response.json()
+            if result.get("success"):
+                bianhao = result["data"].get("bianhao")
+                print(f"✅ SVG 转换任务已创建（编号: {bianhao}）")
+
+                # 若接口返回下载链接，可直接下载文件
+                download_url = result["data"].get("downloadUrl")
+                if download_url:
+                    svg_response = requests.get(download_url)
+                    with open(output_path, "wb") as f:
+                        f.write(svg_response.content)
+                    print(f"✅ SVG 文件已保存到: {output_path}")
+                else:
+                    print("ℹ️ 当前接口仅返回任务创建信息，未提供下载链接。")
+            else:
+                print(f"⚠️ 转换失败: {result}")
+        except Exception:
+            print("⚠️ 响应非 JSON 格式，原始内容：", response.text)
     else:
-        print("❌ 请求失败:", response.status_code, response.text)
+        print(f"❌ 请求失败 [{response.status_code}]：{response.text}")
 
 
 def dataurl_to_pil(dataurl, output_path=None):
