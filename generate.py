@@ -226,6 +226,8 @@ class Generation:
         # 确保必要的目录存在
         os.makedirs("check/first_generation", exist_ok=True)
         os.makedirs("check/second_generation", exist_ok=True)
+        os.makedirs("check/color_generation", exist_ok=True)
+        os.makedirs("check/wrap", exist_ok=True)
         pass
 
     def compare_saliency_maps(self, imageA, imageB):
@@ -448,6 +450,9 @@ class Generation:
         return img_list, mode_list
 
     def color_generation(self, prompts, n_propmts, init_image, id, FLAG_shape):
+        # 确保目录存在
+        os.makedirs("check/color_generation", exist_ok=True)
+        
         seed = random.randint(0,99999999)
         Generator = torch.Generator(device="cuda").manual_seed(seed)
         # 只生成一个

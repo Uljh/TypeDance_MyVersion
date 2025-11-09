@@ -43,64 +43,238 @@ openai.api_key = key
 def img_to_svg_api(img_path, output_path):
     """
     将输入图片转换为 SVG 矢量图（使用 libolibo API）。
+    支持异步任务：上传 -> 查询状态 -> 下载结果
     ✅ 无需修改调用处参数。
     """
-    import requests, os, yaml
+    import requests
+    import time
 
     # 从 my_key.yaml 读取 API Key（推荐方式）
+    # 使用绝对路径，确保能找到配置文件
     api_key = None
+    key_file_path = None
     try:
-        with open('my_key.yaml', 'r') as file:
-            data = yaml.safe_load(file)
-            api_key = data.get('libolibo_api_key', None)
+        # 获取当前文件所在目录，然后查找项目根目录
+        current_file_dir = os.path.dirname(os.path.abspath(__file__))
+        key_file_path = os.path.join(current_file_dir, 'my_key.yaml')
+        
+        # 如果当前目录没有，尝试使用工作目录
+        if not os.path.exists(key_file_path):
+            key_file_path = 'my_key.yaml'
+            if not os.path.exists(key_file_path):
+                # 再次尝试使用工作目录的绝对路径
+                key_file_path = os.path.join(os.getcwd(), 'my_key.yaml')
+        
+        if os.path.exists(key_file_path):
+            with open(key_file_path, 'r', encoding='utf-8') as file:
+                data = yaml.safe_load(file)
+                if data:
+                    # 获取 API key
+                    api_key = data.get('libolibo_api_key')
+                    # 如果还是 None，打印调试信息
+                    if not api_key:
+                        print(f"[DEBUG] YAML 文件内容: {data}")
+                        print(f"[DEBUG] 所有键: {list(data.keys()) if data else 'None'}")
+                        # 尝试所有键，看是否有类似的键名
+                        for key in data.keys():
+                            if 'libolibo' in key.lower() or 'api' in key.lower():
+                                print(f"[DEBUG] 找到可能的键: {key} = {data[key]}")
+                    else:
+                        # 确保 api_key 是字符串类型，去除可能的引号
+                        if isinstance(api_key, str):
+                            api_key = api_key.strip().strip("'").strip('"')
+                        print(f"[DEBUG] ✅ 成功读取 libolibo_api_key，长度: {len(api_key) if api_key else 0}")
+        else:
+            print(f"⚠️ my_key.yaml 文件不存在")
+            print(f"   尝试的路径: {key_file_path}")
+            print(f"   当前工作目录: {os.getcwd()}")
+            print(f"   当前文件目录: {os.path.dirname(os.path.abspath(__file__))}")
+    except FileNotFoundError:
+        print(f"⚠️ my_key.yaml 文件不存在")
+        print(f"   尝试的路径: {key_file_path if key_file_path else 'my_key.yaml'}")
+        print(f"   当前工作目录: {os.getcwd()}")
+        print(f"   当前文件目录: {os.path.dirname(os.path.abspath(__file__))}")
+    except yaml.YAMLError as e:
+        print(f"⚠️ YAML 解析错误: {e}")
+        import traceback
+        traceback.print_exc()
     except Exception as e:
-        print(f"⚠️ 无法读取 my_key.yaml: {e}")
+        print(f"⚠️ 无法读取 my_key.yaml: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
 
     if not api_key:
-        print("❌ 未找到 libolibo_api_key，请在 my_key.yaml 中添加：libolibo_api_key: 'your_api_key_here'")
+        print("❌ 未找到 libolibo_api_key，请在 my_key.yaml 中添加：libolibo_api_key: 'your_api_key'")
+        return
+
+    # 检查输入文件是否存在
+    if not os.path.exists(img_path):
+        print(f"❌ 图片文件不存在: {img_path}")
         return
 
     # 创建输出目录
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
 
-    # 构建请求
-    url = "https://admin.libolibo.cn/api/v1/convert"
+    # ==================== 步骤 1: 上传并创建转换任务 ====================
+    url_convert = "https://admin.libolibo.cn/api/v1/convert"
     headers = {
         "X-API-Key": api_key
     }
-    files = {
-        "file": open(img_path, "rb")
-    }
-    data = {
-        "vectorFormat": ".svg"
-    }
 
-    # 发送请求
-    response = requests.post(url, headers=headers, files=files, data=data)
+    try:
+        print(f"[SVG] 正在上传图片: {img_path}")
+        with open(img_path, "rb") as f:
+            files = {
+                "file": (os.path.basename(img_path), f, "image/png")
+            }
+            data = {
+                "vectorFormat": ".svg"
+            }
+            
+            response = requests.post(url_convert, headers=headers, files=files, data=data, timeout=30)
 
-    # 处理响应
-    if response.status_code == 200:
+        if response.status_code != 200:
+            print(f"❌ 上传失败 [{response.status_code}]: {response.text}")
+            return
+
         try:
             result = response.json()
-            if result.get("success"):
-                bianhao = result["data"].get("bianhao")
-                print(f"✅ SVG 转换任务已创建（编号: {bianhao}）")
+        except ValueError:
+            print(f"❌ 响应不是有效的 JSON: {response.text}")
+            return
 
-                # 若接口返回下载链接，可直接下载文件
-                download_url = result["data"].get("downloadUrl")
-                if download_url:
-                    svg_response = requests.get(download_url)
+        if not result.get("success"):
+            error_msg = result.get("message", "未知错误")
+            print(f"⚠️ 转换任务创建失败: {error_msg}")
+            return
+
+        bianhao = result.get("data", {}).get("bianhao")
+        if not bianhao:
+            print(f"⚠️ 未获取到任务编号: {result}")
+            return
+
+        print(f"✅ SVG 转换任务已创建（编号: {bianhao}）")
+
+        # 检查是否立即返回了下载链接（同步情况）
+        download_url = result.get("data", {}).get("downloadUrl")
+        if download_url:
+            print(f"[SVG] 检测到直接下载链接，正在下载...")
+            try:
+                svg_response = requests.get(download_url, timeout=60)
+                if svg_response.status_code == 200:
                     with open(output_path, "wb") as f:
                         f.write(svg_response.content)
-                    print(f"✅ SVG 文件已保存到: {output_path}")
+                    file_size = os.path.getsize(output_path)
+                    print(f"✅ SVG 文件已保存到: {output_path} ({file_size} 字节)")
+                    return
                 else:
-                    print("ℹ️ 当前接口仅返回任务创建信息，未提供下载链接。")
-            else:
-                print(f"⚠️ 转换失败: {result}")
-        except Exception:
-            print("⚠️ 响应非 JSON 格式，原始内容：", response.text)
-    else:
-        print(f"❌ 请求失败 [{response.status_code}]：{response.text}")
+                    print(f"❌ 下载失败 [{svg_response.status_code}]: {svg_response.text}")
+                    # 如果直接下载失败，继续使用轮询方式
+            except Exception as e:
+                print(f"⚠️ 直接下载失败，将使用轮询方式: {e}")
+                # 继续使用轮询方式
+
+        # ==================== 步骤 2: 查询任务状态（异步任务）====================
+        url_status = f"https://admin.libolibo.cn/api/v1/status/{bianhao}"
+        max_attempts = 120  # 最大尝试次数（10分钟，每5秒一次）
+        attempt = 0
+        last_status = None
+
+        print(f"[SVG] 开始查询任务状态，最多等待 {max_attempts * 5} 秒...")
+
+        while attempt < max_attempts:
+            attempt += 1
+            time.sleep(5)  # 等待5秒后查询状态
+
+            try:
+                status_response = requests.get(url_status, headers=headers, timeout=30)
+                if status_response.status_code != 200:
+                    print(f"⚠️ 查询状态失败 [{status_response.status_code}]: {status_response.text}")
+                    # 继续重试，不立即失败
+                    continue
+
+                try:
+                    status_result = status_response.json()
+                except ValueError:
+                    print(f"⚠️ 状态响应不是有效的 JSON: {status_response.text}")
+                    continue
+
+                if not status_result.get("success"):
+                    error_msg = status_result.get("message", "未知错误")
+                    print(f"⚠️ 状态查询返回错误: {error_msg}")
+                    continue
+
+                status_data = status_result.get("data", {})
+                status = status_data.get("status")  # 可能的值: "pending", "processing", "completed", "failed"
+
+                # 只在状态变化时打印
+                if status != last_status:
+                    print(f"[SVG] 任务状态 ({attempt}/{max_attempts}): {status}")
+                    last_status = status
+
+                if status == "completed":
+                    # 任务完成，获取下载链接
+                    download_url = status_data.get("downloadUrl")
+                    if download_url:
+                        print(f"[SVG] 任务完成，正在下载 SVG 文件...")
+                        try:
+                            svg_response = requests.get(download_url, timeout=60)
+
+                            if svg_response.status_code == 200:
+                                with open(output_path, "wb") as f:
+                                    f.write(svg_response.content)
+                                file_size = os.path.getsize(output_path)
+                                print(f"✅ SVG 文件已保存到: {output_path} ({file_size} 字节)")
+                                return
+                            else:
+                                print(f"❌ 下载失败 [{svg_response.status_code}]: {svg_response.text}")
+                                return
+                        except requests.exceptions.RequestException as e:
+                            print(f"❌ 下载文件时出现网络错误: {e}")
+                            return
+                    else:
+                        print(f"⚠️ 任务完成但未提供下载链接: {status_data}")
+                        return
+
+                elif status == "failed":
+                    error_msg = status_data.get("error", status_data.get("message", "未知错误"))
+                    print(f"❌ 转换任务失败: {error_msg}")
+                    return
+
+                # 如果状态是 "pending" 或 "processing"，继续等待
+                # 每10次查询打印一次进度（减少日志输出）
+                if attempt % 10 == 0:
+                    print(f"[SVG] 任务处理中... ({attempt}/{max_attempts}, 状态: {status})")
+
+            except requests.exceptions.Timeout:
+                print(f"⚠️ 查询状态超时，继续重试... ({attempt}/{max_attempts})")
+                continue
+            except requests.exceptions.RequestException as e:
+                print(f"⚠️ 查询状态时出现网络错误: {e}，继续重试... ({attempt}/{max_attempts})")
+                continue
+            except Exception as e:
+                print(f"⚠️ 查询状态时出现未知错误: {type(e).__name__}: {e}")
+                continue
+
+        # 超时
+        print(f"❌ 转换任务超时（已等待 {max_attempts * 5} 秒）")
+        print(f"   任务编号: {bianhao}")
+        print(f"   可以稍后手动查询状态: GET https://admin.libolibo.cn/api/v1/status/{bianhao}")
+        return
+
+    except FileNotFoundError:
+        print(f"❌ 图片文件不存在: {img_path}")
+        return
+    except requests.exceptions.RequestException as e:
+        print(f"❌ 网络请求失败: {type(e).__name__}: {e}")
+        return
+    except Exception as e:
+        print(f"❌ 转换过程中出现错误: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return
 
 
 def dataurl_to_pil(dataurl, output_path=None):
