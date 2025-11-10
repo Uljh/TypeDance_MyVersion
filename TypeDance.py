@@ -771,22 +771,79 @@ def evaluate_img():
     image = dataurl_to_pil(dataurl, output_path=None).convert("RGB")
     image.save("check/evaluate_img.png")
 
-    model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")#.cuda()
-    processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
-    inputs = processor(text=["A word or text", "An illustration or photo"], images=image, return_tensors="pt", padding=True)
-    outputs = model(**inputs)
-    logits_per_image = outputs.logits_per_image # this is the image-text similarity score
-    probs = logits_per_image.softmax(dim=1) # we can take the softmax to get the label probabilities
-    max_value, max_index = torch.max(probs, dim=1)
-    if max_index == 0:
-        print("more like typeface")
-        origin_score = max_value.item()
-        final_score = -(origin_score-0.5)*2
-    if max_index == 1:
-        print("more like imagery")
-        origin_score = max_value.item()
-        final_score = (origin_score-0.5)*2
-    print(final_score)
+    try:
+        # ⚠️ 使用与 image_extract 相同的 open_clip 模型，而不是 transformers.CLIPModel
+        # 这样可以重用本地已有的模型文件
+        import torch
+        import open_clip
+        from PIL import Image
+        import numpy as np
+        
+        print("[INFO] 🔄 使用 open_clip 模型进行评估（与 image_extract 相同）")
+        
+        # 检查本地模型路径
+        local_clip_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "huggingface", "hub", "models--timm--vit_large_patch14_clip_224.openai")
+        
+        # 设置环境变量，确保使用本地模型
+        os.environ['HF_HOME'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "huggingface")
+        os.environ['HUGGINGFACE_HUB_CACHE'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "huggingface", "hub")
+        os.environ['HF_LOCAL_FILES_ONLY'] = 'True'
+        
+        # 加载模型（使用与 image_extract 相同的配置）
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            'ViT-L-14', 
+            pretrained='openai',
+            device=device
+        )
+        tokenizer = open_clip.get_tokenizer('ViT-L-14')
+        
+        # 准备文本和图像
+        texts = ["A word or text", "An illustration or photo"]
+        text_tokens = tokenizer(texts).to(device)
+        
+        # 预处理图像
+        image_tensor = preprocess(image).unsqueeze(0).to(device)
+        
+        # 计算相似度
+        with torch.no_grad():
+            image_features = model.encode_image(image_tensor)
+            text_features = model.encode_text(text_tokens)
+            
+            # 归一化
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+            
+            # 计算相似度分数
+            logits_per_image = (100.0 * image_features @ text_features.T).softmax(dim=-1)
+            
+        # 获取最大相似度的索引和值
+        max_value, max_index = torch.max(logits_per_image, dim=1)
+        max_index = max_index.item()
+        max_value = max_value.item()
+        
+        # 计算最终分数
+        if max_index == 0:
+            print("more like typeface")
+            origin_score = max_value
+            final_score = -(origin_score-0.5)*2
+        elif max_index == 1:
+            print("more like imagery")
+            origin_score = max_value
+            final_score = (origin_score-0.5)*2
+        else:
+            # 如果索引不在预期范围内，使用默认分数
+            print(f"[WARN] 意外的相似度索引: {max_index}")
+            final_score = 0.0
+            
+        print(f"[INFO] ✅ 评估完成 - 最终分数: {final_score:.4f}")
+        
+    except Exception as e:
+        print(f"[ERROR] CLIP模型加载失败: {e}")
+        import traceback
+        traceback.print_exc()
+        print(f"[INFO] 评估功能暂时不可用，返回默认分数 0.5")
+        final_score = 0.5
     result_score = round(final_score * 20) / 20
     result_score = 0.90 if result_score>0.90 else result_score
     result_score = -0.90 if result_score<-0.90 else result_score

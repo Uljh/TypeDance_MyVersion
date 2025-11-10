@@ -456,12 +456,20 @@ class Generation:
         seed = random.randint(0,99999999)
         Generator = torch.Generator(device="cuda").manual_seed(seed)
         # 只生成一个
+        # ⚠️ 重要：为了更好应用颜色，提高strength，让颜色更明显
         if FLAG_shape:
-            strength = random.random()*(0.30-0.16)+0.16
+            # 对于形状模式，使用中等strength
+            strength = random.random()*(0.50-0.35)+0.35  # 从0.16-0.30提高到0.35-0.50
         else:
-            strength = random.random()*(0.60-0.45)+0.45
-            # strength = 0.45
-        images_img2img = pipe_img2img_art(prompt=prompts, negative_prompt=n_propmts, image=init_image, strength=strength, 
+            # 对于非形状模式，使用较高strength以更好应用颜色
+            strength = random.random()*(0.75-0.60)+0.60  # 从0.45-0.60提高到0.60-0.75
+        # ⚠️ 增强prompt，明确要求保留和应用颜色
+        color_prompt = prompts if isinstance(prompts, str) else prompts[0] if isinstance(prompts, list) else str(prompts)
+        # 如果prompt中没有明确的颜色相关词汇，添加颜色提示
+        if "color" not in color_prompt.lower() and "colour" not in color_prompt.lower():
+            color_prompt = color_prompt + ", vibrant colors, colorful, rich colors, detailed colors"
+        print(f"[INFO] 🎨 颜色生成 - strength: {strength:.2f}, prompt: {color_prompt[:100]}...")
+        images_img2img = pipe_img2img_art(prompt=color_prompt, negative_prompt=n_propmts, image=init_image, strength=strength, 
                                     guidance_scale=7.5, generator=Generator).images[0]
         # images_r = image_grid(images_img2img, 1, len(images_img2img))
         images_img2img.save("check/color_generation/img_generation_"+str(id)+".png")
@@ -572,6 +580,14 @@ class Generation:
             # normal:分奇偶处理
             if prompt_ == prompt_even: # augment performance
                 print("---EVEN---")
+                # 构建final_even_prompt（移到循环外部，避免重复构建）
+                if prompt != "":
+                    final_even_prompt = ", ".join([prompt]*3) + ", " + semantic_prompt.split(",")[0] + ", stylized silhouette, text logo, minimalistic logo, vectorised, minimal flat 2d vector. lineal color. trending on artstation, pinterest, drrrrible" 
+                else:
+                    final_even_prompt = "An illustration, " + semantic_prompt.split(",")[0]+ ", pinterest, drrrrible, stylized silhouette, text logo, minimalistic logo, vectorised, minimal flat 2d vector. lineal color. trending on artstation" 
+                print("----------final_even_prompt: ", final_even_prompt)
+                final_even_prompts = [final_even_prompt] * 3
+                
                 # 得到原材料
                 if FLAG_shape == True:
                     bg_img_list = img2img(pipe_img2img_art, prompt_, img_word_list[iter], 2, s=strength+0.1)
@@ -602,13 +618,7 @@ class Generation:
                     img_combine = img2img(pipe_img2img_art, prompt_, img_r, 1, s=0.65)[0]
                     # gray
                     gray_img = img_combine.convert("L").convert("RGB")
-                    # generate
-                    if prompt != "":
-                        final_even_prompt = ", ".join([prompt]*3) + ", " + semantic_prompt.split(",")[0] + ", stylized silhouette, text logo, minimalistic logo, vectorised, minimal flat 2d vector. lineal color. trending on artstation, pinterest, drrrrible" 
-                    else:
-                        final_even_prompt = "An illustration, " + semantic_prompt.split(",")[0]+ ", pinterest, drrrrible, stylized silhouette, text logo, minimalistic logo, vectorised, minimal flat 2d vector. lineal color. trending on artstation" 
-                    print("----------final_even_prompt: ", final_even_prompt)
-                    final_even_prompts = [final_even_prompt] * 3
+                    # generate (使用循环外部构建的final_even_prompts)
                     images_img2img, seed, mae_dict = self.first_generation(i, final_even_prompts, n_propmts, gray_img, strength=0.54, mae_dict=mae_dict, mode=mode)
             # step2：得到saliency map 算mae
             else:
@@ -630,6 +640,7 @@ class Generation:
 
         # ==================== color ==================== 
         if "color" in option_list:
+            print("[INFO] 🎨 开始颜色生成处理...")
             for i, word_copncept_image in enumerate(img_list):
                 # load image
                 concept_image = img_mask
@@ -645,6 +656,10 @@ class Generation:
                 try:
                     color_thief = ColorThief(temp_color_path)
                     main_color = color_thief.get_color()
+                    print(f"[INFO] 🎨 从概念图像提取的主要颜色 (RGB): {main_color}")
+                except Exception as e:
+                    print(f"[WARN] ⚠️ 颜色提取失败: {e}，使用默认颜色")
+                    main_color = (128, 128, 128)  # 默认灰色
                 finally:
                     # 清理临时文件
                     if os.path.exists(temp_color_path):
@@ -656,14 +671,17 @@ class Generation:
                 img_r = self.add_alpha(img_RGBA, image_bg_color)
                 image_color = add_bg_color(img_r, [255,255,255])
                 image_color.save("check/img_color_grid.png")
+                print(f"[INFO] 🎨 颜色参考图像已保存: check/img_color_grid.png")
                 # word_copncept_image -- canny
                 # image_arr = colorizer(word_copncept_image, image_color)
                 # img_rgb = Image.fromarray(image_arr)
                 # image = self.add_alpha(img_RGBA, img_rgb)
+                # ⚠️ 重要：使用增强的prompt和更高的strength来应用颜色
                 image_color = self.color_generation(prompt_, n_propmt, image_color, i, FLAG_shape)
                 # img_RGBA = bg_removal(image_color, current_path)
                 # element = crop_element_from_RGBA(img_RGBA)
                 img_list[i] = image_color
+                print(f"[INFO] ✅ 颜色生成完成 - 图像 {i+1}/{len(img_list)}")
             if len(option_list)==1 or (len(option_list)==2 and "semantic" in option_list):
                 return img_list, mode_list, alt
 
@@ -801,6 +819,7 @@ class Feedback(Generation):
 
         # ==================== color ==================== 
         if "color" in option_list:
+            print("[INFO] 🎨 开始颜色生成处理 (Feedback模式)...")
             for i, word_copncept_image in enumerate(img_list):
                 # load image
                 concept_image = img_mask
@@ -816,6 +835,10 @@ class Feedback(Generation):
                 try:
                     color_thief = ColorThief(temp_color_path)
                     main_color = color_thief.get_color()
+                    print(f"[INFO] 🎨 从概念图像提取的主要颜色 (RGB): {main_color}")
+                except Exception as e:
+                    print(f"[WARN] ⚠️ 颜色提取失败: {e}，使用默认颜色")
+                    main_color = (128, 128, 128)  # 默认灰色
                 finally:
                     # 清理临时文件
                     if os.path.exists(temp_color_path):
@@ -827,14 +850,17 @@ class Feedback(Generation):
                 img_r = self.add_alpha(img_RGBA, image_bg_color)
                 image_color = add_bg_color(img_r, [255,255,255])
                 image_color.save("check/img_color_grid.png")
+                print(f"[INFO] 🎨 颜色参考图像已保存 (Feedback): check/img_color_grid.png")
                 # word_copncept_image -- canny
                 # image_arr = colorizer(word_copncept_image, image_color)
                 # img_rgb = Image.fromarray(image_arr)
                 # image = self.add_alpha(img_RGBA, img_rgb)
-                image_color = self.color_generation(final_prompts[0], n_propmt, image_color, i)
+                # ⚠️ 重要：使用增强的prompt和更高的strength来应用颜色
+                image_color = self.color_generation(final_prompts[0], n_propmt, image_color, i, FLAG_shape=False)
                 img_RGBA = bg_removal(image_color, current_path)
-                element = crop_element_from_RGBA(img_RGBA)
-                img_list[i] = element
+                element = crop_element_from_RGBA(img_RGBA, crop = False)
+                images_rm_list.append(element)
+                print(f"[INFO] ✅ 颜色生成完成 (Feedback) - 图像 {i+1}/{len(img_list)}")
             if len(option_list)==1 or (len(option_list)==2 and "semantic" in option_list):
                 return img_list, mode_list, alt
 

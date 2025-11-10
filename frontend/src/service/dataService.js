@@ -88,23 +88,33 @@ export function startRetreiveInfo(param, callback) {
     })
 }
 
-export function ConvertToSvg(param, callback) {
+export function ConvertToSvg(param, callback, errorCallback) {
     const url = `${T_URL}/convert_to_svg`;
     axios.post(url, param)
     .then(response => {
-        callback(response.data)
-    }, errResponnse => {
-        console.log(errResponnse);
+        if (callback) {
+            callback(response.data);
+        }
+    }, errResponse => {
+        console.error('Error converting to SVG:', errResponse);
+        if (errorCallback) {
+            errorCallback(errResponse);
+        }
     })
 }
 
-export function startEvaluate(param, callback) {
+export function startEvaluate(param, callback, errorCallback) {
     const url = `${T_URL}/evaluate_element`;
     axios.post(url, param)
     .then(response => {
-        callback(response.data)
-    }, errResponnse => {
-        console.log(errResponnse);
+        if (callback) {
+            callback(response.data);
+        }
+    }, errResponse => {
+        console.error('Error evaluating element:', errResponse);
+        if (errorCallback) {
+            errorCallback(errResponse);
+        }
     })
 }
 

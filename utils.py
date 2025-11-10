@@ -58,7 +58,7 @@ def img_to_svg_api(img_path, output_path, callback_base_url=None):
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     
     # API 配置
-    api_key = "aWp5GZC4pp7pvGhGnLFoC0yotvkSJt6knRx7"
+    api_key = "OIWpUg6H6qgaAQiu9LmrY8xoOaJsTZFO2nbi"
     api_url = "https://imageapi.ai-gs.cn/v1/vector"
     
     # 创建输出目录

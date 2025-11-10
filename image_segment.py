@@ -7,9 +7,9 @@ from segment_anything import sam_model_registry, SamPredictor
 
 # =========== 模型初始化 ===========
 
-# 换为较小模型 vit_b（以减少显存占用）
-sam_checkpoint = "models/sam_vit_b_01ec64.pth"
-model_type = "vit_b"
+# 使用更大的模型 vit_h（更好的分割效果）
+sam_checkpoint = "models/sam_vit_h_4b8939.pth"
+model_type = "vit_h"
 
 # 自动选择设备（若有 GPU 用 GPU，否则用 CPU）
 device = "cuda" if torch.cuda.is_available() else "cpu"

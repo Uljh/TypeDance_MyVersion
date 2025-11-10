@@ -208,6 +208,10 @@ const small = () => {
 
 const clone = () => {
     const activeObject = canvas.c.getActiveObject();
+    if (!activeObject) {
+        console.warn('No active object to clone');
+        return;
+    }
     activeObject.clone(cloned => {
         canvas.c.discardActiveObject()
         // 间距设置
@@ -223,10 +227,22 @@ const clone = () => {
 }
 
 const del = () => {
-    const activeObject = canvas.c.getActiveObjects();
-    activeObject && activeObject.map(item => canvas.c.remove(item))
-    canvas.c.requestRenderAll()
-    canvas.c.discardActiveObject()
+    const activeObjects = canvas.c.getActiveObjects();
+    if (!activeObjects || activeObjects.length === 0) {
+        // 如果没有选中对象，尝试删除单个活动对象
+        const activeObject = canvas.c.getActiveObject();
+        if (activeObject) {
+            canvas.c.remove(activeObject);
+            canvas.c.requestRenderAll();
+            canvas.c.discardActiveObject();
+        } else {
+            console.warn('No active object to delete');
+        }
+        return;
+    }
+    activeObjects.forEach(item => canvas.c.remove(item));
+    canvas.c.requestRenderAll();
+    canvas.c.discardActiveObject();
 }
 
 let mSelectMode = inject('mSelectMode')
@@ -242,102 +258,192 @@ const isMultiple = computed(() => {
 })
 // // 拆分组
 const unGroup = () => {
+    const activeObject = canvas.c.getActiveObject();
+    if (!activeObject) {
+        console.warn('No active object to ungroup');
+        return;
+    }
+    // 检查是否是组合对象
+    if (activeObject.type !== 'group' && activeObject.type !== 'activeSelection') {
+        console.warn('Active object is not a group');
+        return;
+    }
     // 先获取当前选中的对象，然后打散
-    canvas.c.getActiveObject().toActiveSelection()
-    canvas.c.getActiveObject().getObjects().forEach(item => {
-        item.set('id', uuid())
-    })
-    canvas.c.discardActiveObject().renderAll();
+    activeObject.toActiveSelection();
+    const objects = activeObject.getObjects();
+    if (objects && objects.length > 0) {
+        objects.forEach(item => {
+            item.set('id', uuid())
+        })
+    }
+    canvas.c.discardActiveObject();
+    canvas.c.renderAll();
 }
 const group = () => {
     // 组合元素
-    var activeObj = canvas.c.getActiveObject();
-    var activegroup = activeObj.toGroup();
-    var objectsInGroup = activegroup.getObjects();
-    activegroup.clone((newgroup) => {
-        canvas.c.remove(activegroup);
-        objectsInGroup.forEach((object) => {
-            canvas.c.remove(object);
+    const activeObj = canvas.c.getActiveObject();
+    if (!activeObj) {
+        console.warn('No active object to group');
+        return;
+    }
+    // 检查是否是多个对象（ActiveSelection）
+    if (activeObj.type !== 'activeSelection') {
+        console.warn('Active object is not a selection of multiple objects');
+        return;
+    }
+    try {
+        var activegroup = activeObj.toGroup();
+        var objectsInGroup = activegroup.getObjects();
+        activegroup.clone((newgroup) => {
+            canvas.c.remove(activegroup);
+            objectsInGroup.forEach((object) => {
+                canvas.c.remove(object);
+            });
+            canvas.c.add(newgroup);
+            canvas.c.setActiveObject(newgroup);
+            canvas.c.requestRenderAll();
         });
-        canvas.c.add(newgroup);
-        canvas.c.setActiveObject(newgroup);
-    });
+    } catch (error) {
+        console.error('Error grouping objects:', error);
+    }
 }
 
 function convertTosvg() {
     var activeObj = canvas.c.getActiveObject();
-    localStorage.setItem('activeObj', JSON.stringify(activeObj));
-    var dataURL = JSON.parse(localStorage.getItem('activeObj'));
-    let param = {
-        data: dataURL
-    };
-    ConvertToSvg(param, function (data) {
-        fabric.loadSVGFromURL('/src/assets/canvas/image.svg', function (objects, options) {
-            var svgObject = fabric.util.groupSVGElements(objects, options);
-            svgObject.id = "image";
-            canvas.c.add(svgObject);
-            canvas.c.setActiveObject(svgObject);
+    if (!activeObj) {
+        console.warn('No active object to convert to SVG');
+        return;
+    }
+    try {
+        // 将对象转换为数据URL
+        const dataURL = activeObj.toDataURL({ format: 'png', quality: 1 });
+        let param = {
+            data: dataURL
+        };
+        ConvertToSvg(param, function (data) {
+            if (data && data.svg_path) {
+                // 使用返回的SVG路径加载
+                fabric.loadSVGFromURL(data.svg_path, function (objects, options) {
+                    if (!objects || objects.length === 0) {
+                        console.error('Failed to load SVG objects');
+                        return;
+                    }
+                    try {
+                        var svgObject = fabric.util.groupSVGElements(objects, options);
+                        svgObject.id = "image";
+                        canvas.c.add(svgObject);
+                        canvas.c.setActiveObject(svgObject);
+                        canvas.c.requestRenderAll();
+                    } catch (error) {
+                        console.error('Error grouping SVG elements:', error);
+                        // 如果分组失败，尝试直接添加对象
+                        objects.forEach(obj => {
+                            if (obj) {
+                                canvas.c.add(obj);
+                            }
+                        });
+                        canvas.c.requestRenderAll();
+                    }
+                }, function(error) {
+                    console.error('Error loading SVG:', error);
+                });
+            } else {
+                console.error('No SVG path in response:', data);
+            }
+        }, function(error) {
+            console.error('Error converting to SVG:', error);
         });
-    })
+    } catch (error) {
+        console.error('Error converting object to SVG:', error);
+    }
 }
 
 function clickEvaluate() {
     var activeObj = canvas.c.getActiveObject();
-    localStorage.setItem('activeObj', JSON.stringify(activeObj));
-    var dataURL = JSON.parse(localStorage.getItem('activeObj'));
-    // get alt(prompt)
-    const alt = activeObj.get('name');
-    // load image
-    const evaImg = document.getElementById("evaluation-img-self")
-    evaImg.src = dataURL.src
-    // evaImg.setAttribute("data-alt", alt)
-    dataAlt.value = alt;
-    let param = { "data": dataURL.src, "alt": alt }
-    startEvaluate(param, function (data) {
-        // load score
-        evaResultScore.value = data.result_score
-        var rangeValue = document.getElementById("eva-score");
-        var slider = document.getElementById("control-evaluation");
-        rangeValue.textContent = Math.abs(data.result_score);
-        slider.value = data.result_score;
-        anchorEvaScore.value = data.result_score;
+    if (!activeObj) {
+        console.warn('No active object to evaluate');
+        return;
+    }
+    try {
+        // 将对象转换为数据URL
+        const dataURL = activeObj.toDataURL({ format: 'png', quality: 1 });
+        // get alt(prompt)
+        const alt = activeObj.get('name') || '';
+        // load image
+        const evaImg = document.getElementById("evaluation-img-self");
+        if (evaImg) {
+            evaImg.src = dataURL;
+        }
+        dataAlt.value = alt;
+        let param = { "data": dataURL, "alt": alt };
+        startEvaluate(param, function (data) {
+            if (!data || data.result_score === undefined) {
+                console.error('Invalid evaluation result:', data);
+                return;
+            }
+            // load score
+            evaResultScore.value = data.result_score;
+            var rangeValue = document.getElementById("eva-score");
+            var slider = document.getElementById("control-evaluation");
+            if (rangeValue && slider) {
+                rangeValue.textContent = Math.abs(data.result_score);
+                slider.value = data.result_score;
+                anchorEvaScore.value = data.result_score;
 
-        if (slider.value < 0) {
-            rangeValue.style.backgroundColor = "rgba(203, 82, 40, 0.4)";
-            rangeValue.style.color = "rgba(185, 82, 48, 1)";
-        }
-        if (slider.value > 0) {
-            rangeValue.style.backgroundColor = "rgba(38, 111, 136, 0.4)";
-            rangeValue.style.color = "rgba(38, 111, 136, 1)";
-        }
-        if (slider.value == 0) {
-            rangeValue.style.backgroundColor = "rgba(225, 230, 96, 0.5)";
-            rangeValue.style.color = "#797B0B";
-        }
-
-    })
+                if (slider.value < 0) {
+                    rangeValue.style.backgroundColor = "rgba(203, 82, 40, 0.4)";
+                    rangeValue.style.color = "rgba(185, 82, 48, 1)";
+                }
+                if (slider.value > 0) {
+                    rangeValue.style.backgroundColor = "rgba(38, 111, 136, 0.4)";
+                    rangeValue.style.color = "rgba(38, 111, 136, 1)";
+                }
+                if (slider.value == 0) {
+                    rangeValue.style.backgroundColor = "rgba(225, 230, 96, 0.5)";
+                    rangeValue.style.color = "#797B0B";
+                }
+            }
+        }, function(error) {
+            console.error('Error evaluating object:', error);
+        });
+    } catch (error) {
+        console.error('Error in clickEvaluate:', error);
+    }
 }
 
 function displayTextOnCanvas() {
-    const evaImg = document.getElementById("evaluation-img-self")
+    const evaImg = document.getElementById("evaluation-img-self");
+    if (!evaImg || !evaImg.src) {
+        console.warn('No evaluation image to display');
+        return;
+    }
     const imgEl = document.createElement('img');
-    imgEl.src = evaImg.src
+    imgEl.src = evaImg.src;
     // 插入页面
     document.body.appendChild(imgEl);
     imgEl.onload = () => {
-        // 创建图片对象
-        const imgInstance = new fabric.Image(imgEl, {
-            id: uuid(),
-            left: 100, top: 100,
-        });
-        // 设置缩放
-        imgInstance.scale(0.5);
-        canvas.c.add(imgInstance)
-        canvas.c.setActiveObject(imgInstance);
-        canvas.c.renderAll()
-        // 删除页面中的图片元素
-        imgEl.remove()
-    }
+        try {
+            // 创建图片对象
+            const imgInstance = new fabric.Image(imgEl, {
+                id: uuid(),
+                left: 100, top: 100,
+            });
+            // 设置缩放
+            imgInstance.scale(0.5);
+            canvas.c.add(imgInstance);
+            canvas.c.setActiveObject(imgInstance);
+            canvas.c.renderAll();
+        } catch (error) {
+            console.error('Error displaying image on canvas:', error);
+        } finally {
+            // 删除页面中的图片元素
+            imgEl.remove();
+        }
+    };
+    imgEl.onerror = () => {
+        console.error('Error loading image:', evaImg.src);
+        imgEl.remove();
+    };
 }
 
 onMounted(() => {
