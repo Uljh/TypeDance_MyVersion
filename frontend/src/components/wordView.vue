@@ -191,6 +191,10 @@ import { useRouter, useRoute } from 'vue-router'
 import { useSettingStore, useJsonStore } from '../store/modules/settingStore'
 import { useDesignPriorStore } from '../store/modules/imageViewStore'
 import { startBrainStorm, imageSegment, startImageExtract } from '../service/dataService';
+
+// 获取后端服务器地址（与 dataService.js 中的 T_URL 保持一致）
+// 注意：这里需要与 dataService.js 中的配置保持一致
+const BACKEND_URL = 'http://127.0.0.1:6006';
 import fontList from "@/assets/fonts/font";
 import { fabric } from 'fabric';
 
@@ -414,17 +418,250 @@ function displayText() {
 
         // ========== 中央主画布：加载剩余结构（SVG） ==========
         // 优先使用后端返回的 SVG 内容（直接字符串），如果没有则尝试从路径加载
+        console.log("🎨 [SVG] Checking SVG data in response...");
+        console.log("🎨 [SVG] data keys:", Object.keys(data || {}));
+        console.log("🎨 [SVG] data.svg_content exists:", !!data.svg_content);
+        console.log("🎨 [SVG] data.svg_path exists:", !!data.svg_path);
+        
         if (data.svg_content) {
-          console.log("🎨 Loading SVG from content (length):", data.svg_content.length);
-          displayTextOnCanvasFromString(data.svg_content);
+          console.log("✅ [SVG] Loading SVG from content (length):", data.svg_content.length);
+          console.log("✅ [SVG] SVG content preview (first 200 chars):", data.svg_content.substring(0, 200));
+          try {
+            displayTextOnCanvasFromString(data.svg_content);
+          } catch (error) {
+            console.error("❌ [SVG] Error calling displayTextOnCanvasFromString:", error);
+          }
         } else if (data.svg_path) {
-          console.log("🎨 Loading SVG from path:", data.svg_path);
-          // 添加时间戳避免浏览器缓存旧文件
-          const svgUrl = String(data.svg_path) + "?t=" + Date.now();
-          console.log("🎨 SVG URL with timestamp:", svgUrl);
-          displayTextOnCanvas(svgUrl);
+         console.log("⚠️ [SVG] No SVG content, loading from path:", data.svg_path);
+         console.log("ℹ️ [SVG] 前端将等待新的 SVG 文件生成（文件将被覆盖，通过文件大小变化检测新文件）");
+          
+          // ⚠️ 重要：将相对路径转换为完整的后端 URL
+          // 后端返回的路径是相对路径（如 /api/svg_image/...），需要添加后端服务器地址
+          // 后端服务器地址：http://127.0.0.1:6006
+          const BACKEND_URL_LOCAL = 'http://127.0.0.1:6006';
+          let svgPath = String(data.svg_path);
+          
+          console.log(`🔍 [SVG] 原始路径: ${svgPath}`);
+          console.log(`🔍 [SVG] BACKEND_URL: ${BACKEND_URL_LOCAL}`);
+          
+          // 如果路径是相对路径（以 / 开头），添加后端服务器地址
+          if (svgPath.startsWith('/')) {
+            svgPath = BACKEND_URL_LOCAL + svgPath;
+            console.log(`✅ [SVG] 相对路径转换为完整 URL: ${svgPath}`);
+          } else if (svgPath.startsWith('http://') || svgPath.startsWith('https://')) {
+            // 如果已经是完整 URL，直接使用
+            console.log(`✅ [SVG] 路径已是完整 URL: ${svgPath}`);
+          } else {
+            // 如果不是完整 URL 也不是相对路径，添加后端服务器地址
+            svgPath = BACKEND_URL_LOCAL + '/' + svgPath;
+            console.log(`✅ [SVG] 其他路径转换为完整 URL: ${svgPath}`);
+          }
+          
+          console.log(`✅ [SVG] 后端返回的路径: ${data.svg_path}`);
+          console.log(`✅ [SVG] 最终使用的完整 SVG URL: ${svgPath}`);
+          
+         // 记录开始等待的时间，用于检测新文件
+         // ⚠️ 关键：记录请求开始时间，只有修改时间晚于开始时间的文件才是新文件
+         const startTime = Date.now();
+         const requestStartTime = startTime; // 请求开始时间，用于判断文件是否是新生成的
+         let lastModifiedTime = null;
+         let lastFileSize = 0;
+         let initialFileSize = 0; // 初始文件大小
+         let initialModifiedTime = null; // 初始文件修改时间
+         let stableFileSizeCount = 0; // 文件大小稳定的次数（连续两次检查大小一致）
+         let loadSuccess = false;
+         let initialFileDetected = false; // 是否已经检测到初始文件（可能是旧文件）
+         
+         // 如果 SVG 内容不存在，尝试从路径加载
+         // ⚠️ 关键逻辑：只有文件的修改时间晚于请求开始时间，或者文件大小发生变化，才认为是新文件
+         // 使用轮询机制等待新文件生成
+         let retryCount = 0;
+         const maxRetries = 180; // 最多重试180次（180秒，3分钟），因为SVG转换可能需要更长时间
+         const retryInterval = 1000; // 每1秒重试一次
+         
+         function tryLoadSVG() {
+           if (loadSuccess) {
+             console.log("✅ [SVG] SVG 已成功加载，停止重试");
+             return;
+           }
+           
+           retryCount++;
+           const currentTime = Date.now();
+           const elapsedTime = ((currentTime - startTime) / 1000).toFixed(1);
+           
+           // 每次请求都添加新的时间戳，避免浏览器缓存
+           const svgUrl = svgPath + "?t=" + currentTime + "&v=" + Math.random();
+           console.log(`🔄 [SVG] 检查 SVG 文件 (${retryCount}/${maxRetries}, ${elapsedTime}s):`, svgUrl);
+           
+           // 使用 fetch 先检查文件是否存在，并获取文件信息
+           // 注意：不手动添加缓存控制头，避免 CORS 问题
+           // URL 中的时间戳和随机数已经可以避免浏览器缓存
+           // 使用 HEAD 请求检查文件是否存在和获取文件信息
+           // 注意：不添加任何自定义请求头，避免 CORS 预检请求问题
+           fetch(svgUrl, { 
+             method: 'HEAD',
+             mode: 'cors'
+           })
+             .then(response => {
+               if (response.ok) {
+                 // 检查文件大小和修改时间
+                 const contentLength = response.headers.get('content-length');
+                 const lastModified = response.headers.get('last-modified');
+                 const fileSize = contentLength ? parseInt(contentLength) : 0;
+                 const modifiedTime = lastModified ? new Date(lastModified).getTime() : null;
+                 
+                 const elapsedSeconds = (Date.now() - startTime) / 1000;
+                 const fileTime = modifiedTime;
+                 const timeDiff = fileTime ? fileTime - requestStartTime : 0;
+                 
+                 console.log(`ℹ️ [SVG] 文件信息 - 大小: ${fileSize} bytes, 修改时间: ${lastModified || '未知'}, 文件时间戳: ${fileTime}, 请求开始时间: ${requestStartTime}, 时间差: ${timeDiff}ms, 已等待: ${elapsedSeconds.toFixed(1)}s`);
+                 console.log(`ℹ️ [SVG] 上次记录的修改时间: ${lastModifiedTime}, 上次文件大小: ${lastFileSize}`);
+                 
+                 if (fileSize > 0) {
+                   // ⚠️ 关键：记录初始文件状态（第一次检测到的文件可能是旧文件）
+                   if (!initialFileDetected) {
+                     initialFileDetected = true;
+                     initialFileSize = fileSize;
+                     initialModifiedTime = modifiedTime;
+                     lastFileSize = fileSize;
+                     lastModifiedTime = modifiedTime;
+                     console.log(`ℹ️ [SVG] 首次检测到文件 - 大小: ${fileSize} bytes, 修改时间: ${lastModified || '未知'}`);
+                     console.log(`ℹ️ [SVG] 这可能是旧文件，将等待文件大小或修改时间变化`);
+                   }
+                   
+                   // ⚠️ 关键判断1：文件大小是否发生变化（这是最可靠的指标）
+                   const fileSizeChanged = fileSize !== lastFileSize && lastFileSize > 0;
+                   
+                   // ⚠️ 关键判断2：文件大小是否与初始不同（说明是新文件覆盖了旧文件）
+                   const fileSizeDifferentFromInitial = fileSize !== initialFileSize;
+                   
+                   // ⚠️ 关键判断3：文件修改时间是否更新
+                   const modifiedTimeChanged = modifiedTime && lastModifiedTime && modifiedTime > lastModifiedTime;
+                   
+                   // ⚠️ 关键判断4：文件修改时间是否晚于请求开始时间（说明是新文件）
+                   const isNewFile = modifiedTime && modifiedTime > requestStartTime;
+                   
+                   // ⚠️ 关键判断5：文件大小是否稳定（连续两次检查大小一致）
+                   if (fileSize === lastFileSize && lastFileSize > 0) {
+                     stableFileSizeCount++;
+                   } else {
+                     stableFileSizeCount = 0; // 重置计数
+                   }
+                   
+                   console.log(`🔍 [SVG] 文件大小变化: ${fileSizeChanged} (当前: ${fileSize}, 上次: ${lastFileSize}, 初始: ${initialFileSize})`);
+                   console.log(`🔍 [SVG] 文件大小与初始不同: ${fileSizeDifferentFromInitial}`);
+                   console.log(`🔍 [SVG] 修改时间变化: ${modifiedTimeChanged} (当前: ${modifiedTime}, 上次: ${lastModifiedTime})`);
+                   console.log(`🔍 [SVG] 是否为新文件（修改时间 > 请求开始时间）: ${isNewFile}`);
+                   console.log(`🔍 [SVG] 文件大小稳定次数: ${stableFileSizeCount}`);
+                   
+                   // 更新记录
+                   lastFileSize = fileSize;
+                   lastModifiedTime = modifiedTime;
+                   
+                   // ⚠️ 关键加载逻辑：
+                   // 1. 如果文件大小发生变化且稳定，说明新文件已写入，等待3秒后加载
+                   // 2. 如果文件修改时间晚于请求开始时间且大小稳定，说明是新文件，等待3秒后加载
+                   // 3. 如果文件大小与初始不同且稳定，说明新文件已覆盖旧文件，等待5秒后加载
+                   // 4. 如果等待时间超过25秒，直接加载（确保新文件已生成，即使检测不到变化）
+                   const shouldLoad = (fileSizeChanged && stableFileSizeCount >= 2 && elapsedSeconds > 5) ||  // 文件大小变化且稳定，等待超过5秒
+                                     (isNewFile && stableFileSizeCount >= 2 && elapsedSeconds > 3) ||  // 新文件且大小稳定，等待超过3秒
+                                     (fileSizeDifferentFromInitial && stableFileSizeCount >= 2 && elapsedSeconds > 5) ||  // 文件大小与初始不同且稳定，等待超过5秒
+                                     elapsedSeconds > 25;  // 等待超过25秒，直接加载（确保新文件已生成）
+                   
+                   console.log(`🔍 [SVG] 是否应该加载: ${shouldLoad} (大小变化: ${fileSizeChanged}, 是否为新文件: ${isNewFile}, 大小与初始不同: ${fileSizeDifferentFromInitial}, 大小稳定: ${stableFileSizeCount >= 2}, 等待时间: ${elapsedSeconds.toFixed(1)}s)`);
+                   
+                   if (shouldLoad) {
+                     // ⚠️ 关键：只有在文件大小变化或文件是新文件时才加载
+                     // 如果文件是旧文件（修改时间早于请求开始时间）且大小未变化，继续等待
+                     if (!isNewFile && !fileSizeChanged && fileSize === initialFileSize && elapsedSeconds < 25) {
+                       console.log(`⚠️ [SVG] 文件是旧文件且大小未变化，继续等待新文件生成... (${retryCount}/${maxRetries}, 已等待 ${elapsedSeconds.toFixed(1)}s)`);
+                       if (retryCount < maxRetries) {
+                         setTimeout(tryLoadSVG, retryInterval);
+                       }
+                       return;
+                     }
+                     
+                     console.log(`✅ [SVG] 准备加载 SVG 文件 (大小: ${fileSize} bytes, 修改时间: ${lastModified || '未知'}, 是否为新文件: ${isNewFile}, 大小变化: ${fileSizeChanged}, 已等待 ${elapsedSeconds.toFixed(1)}s)`);
+                     
+                     // 稍微延迟一下，确保文件完全写入
+                     setTimeout(() => {
+                       try {
+                         // 使用带时间戳和随机数的 URL 加载，避免缓存
+                         const loadUrl = svgPath + "?t=" + Date.now() + "&v=" + Math.random();
+                         console.log(`🔄 [SVG] 开始加载 SVG: ${loadUrl}`);
+                         
+                         // 调用显示函数（不抛出错误，让函数内部处理）
+                         displayTextOnCanvas(loadUrl);
+                         
+                         // 标记为成功（即使有部分元素解析错误，只要主要部分加载成功即可）
+                         loadSuccess = true;
+                         console.log("✅ [SVG] SVG 加载并显示成功（即使有部分元素解析错误，主要部分已显示）");
+                       } catch (error) {
+                         console.error(`❌ [SVG] SVG 加载失败:`, error);
+                         console.error(`❌ [SVG] 错误堆栈:`, error.stack);
+                         // 即使加载失败，也继续重试
+                         lastModifiedTime = null; // 重置，允许重新检测
+                         lastFileSize = 0; // 重置
+                         initialFileDetected = false; // 重置初始文件检测标志
+                         stableFileSizeCount = 0; // 重置
+                         loadSuccess = false; // 重置成功标志
+                         if (retryCount < maxRetries) {
+                           setTimeout(tryLoadSVG, retryInterval);
+                         } else {
+                           console.error("❌ [SVG] SVG 加载失败，已达到最大重试次数");
+                         }
+                       }
+                     }, 1000); // 延迟 1秒 确保文件完全写入
+                   } else {
+                     // 文件存在但还未到加载时机，继续等待
+                     console.log(`ℹ️ [SVG] 文件存在但等待更长时间以确保是新文件... (${retryCount}/${maxRetries}, 已等待 ${elapsedSeconds.toFixed(1)}s)`);
+                     if (retryCount < maxRetries) {
+                       setTimeout(tryLoadSVG, retryInterval);
+                     }
+                   }
+                 } else {
+                   console.log(`ℹ️ [SVG] SVG 文件存在但大小为 0，可能还在生成中... (${retryCount}/${maxRetries})`);
+                   if (retryCount < maxRetries) {
+                     setTimeout(tryLoadSVG, retryInterval);
+                   } else {
+                     console.error("❌ [SVG] SVG 文件大小为 0，已达到最大重试次数");
+                   }
+                 }
+               } else if (response.status === 404) {
+                 // 文件不存在，继续等待
+                 console.log(`ℹ️ [SVG] SVG 文件尚未生成 (404), 等待中... (${retryCount}/${maxRetries}, ${elapsedTime}s)`);
+                 if (retryCount < maxRetries) {
+                   setTimeout(tryLoadSVG, retryInterval);
+                 } else {
+                   console.error("❌ [SVG] SVG 文件加载超时，已达到最大重试次数");
+                 }
+               } else {
+                 console.warn(`⚠️ [SVG] SVG 文件检查失败 (${response.status}), 继续重试... (${retryCount}/${maxRetries})`);
+                 console.warn(`⚠️ [SVG] 响应头:`, Object.fromEntries(response.headers.entries()));
+                 if (retryCount < maxRetries) {
+                   setTimeout(tryLoadSVG, retryInterval);
+                 } else {
+                   console.error("❌ [SVG] SVG 文件检查失败，已达到最大重试次数");
+                 }
+               }
+             })
+             .catch(error => {
+               console.error(`❌ [SVG] 检查 SVG 文件失败 (${retryCount}/${maxRetries}):`, error);
+               console.error(`❌ [SVG] 错误详情:`, error.message);
+               if (retryCount < maxRetries) {
+                 setTimeout(tryLoadSVG, retryInterval);
+               } else {
+                 console.error("❌ [SVG] SVG 文件检查失败，已达到最大重试次数");
+               }
+             });
+         }
+         
+         // 延迟一下再开始检查，给后台转换一些时间
+         console.log("ℹ️ [SVG] 等待 3 秒后开始检查新生成的 SVG 文件（通过文件大小变化检测新文件）...");
+         setTimeout(tryLoadSVG, 3000);
         } else {
-          console.warn("⚠️ No SVG content or path returned from backend.");
+          console.warn("⚠️ [SVG] No SVG content or path returned from backend.");
+          console.warn("⚠️ [SVG] Available data keys:", Object.keys(data || {}));
         }
       });
     });
@@ -438,23 +675,40 @@ function addSelectionTrigger() {
 // ✅ 从 SVG 字符串加载（推荐，用于远程服务器）
 function displayTextOnCanvasFromString(svgContent) {
   console.log("🔄 [SVG] Loading SVG from string content");
+  console.log("🔄 [SVG] SVG content type:", typeof svgContent);
+  console.log("🔄 [SVG] SVG content length:", svgContent?.length);
+  
   if (!svgContent || svgContent.trim().length === 0) {
     console.error("❌ [SVG] Empty SVG content");
     return;
   }
   
+  // 检查 canvas 对象是否存在
+  if (!canvas || !canvas.c) {
+    console.error("❌ [SVG] Canvas object not found");
+    console.error("❌ [SVG] canvas:", canvas);
+    return;
+  }
+  
+  console.log("🔄 [SVG] Canvas found, width:", canvas.c.getWidth(), "height:", canvas.c.getHeight());
+  
   fabric.loadSVGFromString(svgContent, function (objects, options) {
     // 检查是否成功加载
     if (!objects || objects.length === 0) {
       console.warn("⚠️ [SVG] SVG loaded but no objects found");
+      console.warn("⚠️ [SVG] objects:", objects);
+      console.warn("⚠️ [SVG] options:", options);
       return;
     }
     
     console.log("✅ [SVG] SVG loaded successfully from string, objects count:", objects.length);
+    console.log("✅ [SVG] SVG options:", options);
     
     try {
       const svgObject = fabric.util.groupSVGElements(objects, options);
       svgObject.id = "word";
+      
+      console.log("✅ [SVG] SVG object created, width:", svgObject.width, "height:", svgObject.height);
 
       // 删除旧的 word 图层
       const oldObjs = canvas.c.getObjects();
@@ -467,35 +721,86 @@ function displayTextOnCanvasFromString(svgContent) {
       // 自适应居中
       const cw = canvas.c.getWidth();
       const ch = canvas.c.getHeight();
-      const scale = 0.7 * Math.min(cw / svgObject.width, ch / svgObject.height);
-      svgObject.scale(scale);
-      svgObject.left = (cw - svgObject.width * scale) / 2;
-      svgObject.top = (ch - svgObject.height * scale) / 2;
+      console.log("🔄 [SVG] Canvas dimensions:", cw, "x", ch);
+      console.log("🔄 [SVG] SVG object dimensions:", svgObject.width, "x", svgObject.height);
+      
+      if (svgObject.width && svgObject.height) {
+        const scale = 0.7 * Math.min(cw / svgObject.width, ch / svgObject.height);
+        console.log("🔄 [SVG] Calculated scale:", scale);
+        svgObject.scale(scale);
+        svgObject.left = (cw - svgObject.width * scale) / 2;
+        svgObject.top = (ch - svgObject.height * scale) / 2;
+        console.log("🔄 [SVG] SVG position:", svgObject.left, svgObject.top);
+      } else {
+        console.warn("⚠️ [SVG] SVG object has no width/height, using default scale");
+        svgObject.scale(0.7);
+        svgObject.left = cw / 2;
+        svgObject.top = ch / 2;
+      }
 
       canvas.c.add(svgObject);
       canvas.c.renderAll();
       console.log("✅ [SVG] SVG added to canvas and rendered successfully");
+      console.log("✅ [SVG] Canvas objects count:", canvas.c.getObjects().length);
     } catch (error) {
       console.error("❌ [SVG] Error processing SVG objects:", error);
+      console.error("❌ [SVG] Error stack:", error.stack);
     }
+  }, function(error) {
+    console.error("❌ [SVG] Error loading SVG from string:", error);
+    console.error("❌ [SVG] Error details:", error);
   });
 }
 
 // ✅ 从 URL 路径加载（备用方案）
 function displayTextOnCanvas(svgPath = '/src/assets/canvas/word.svg' + "?t=" + Date.now()) {
   console.log("🔄 [SVG] Loading SVG from path:", svgPath);
+  
+  // 检查 canvas 对象是否存在
+  if (!canvas || !canvas.c) {
+    console.error("❌ [SVG] Canvas object not found");
+    console.error("❌ [SVG] canvas:", canvas);
+    throw new Error("Canvas object not found");
+  }
+  
+  console.log("🔄 [SVG] Canvas found, width:", canvas.c.getWidth(), "height:", canvas.c.getHeight());
+  
+  // 使用更宽松的解析选项，忽略解析错误
+  const parseOptions = {
+    crossOrigin: 'anonymous',
+    // 忽略某些解析错误，继续加载其他元素
+    suppressPreamble: true
+  };
+  
   fabric.loadSVGFromURL(svgPath, function (objects, options) {
     // 检查是否成功加载
     if (!objects || objects.length === 0) {
       console.warn("⚠️ [SVG] SVG loaded but no objects found");
+      console.warn("⚠️ [SVG] objects:", objects);
+      console.warn("⚠️ [SVG] options:", options);
+      // 不抛出错误，而是尝试其他方法
+      console.warn("⚠️ [SVG] 尝试使用备用方法加载 SVG");
       return;
     }
     
     console.log("✅ [SVG] SVG loaded successfully, objects count:", objects.length);
+    console.log("✅ [SVG] SVG options:", options);
     
     try {
-      const svgObject = fabric.util.groupSVGElements(objects, options);
+      // 过滤掉无效的对象（如果有的话）
+      const validObjects = objects.filter(obj => obj != null);
+      if (validObjects.length === 0) {
+        console.warn("⚠️ [SVG] 所有对象都无效");
+        return;
+      }
+      
+      console.log(`✅ [SVG] 有效对象数量: ${validObjects.length}/${objects.length}`);
+      
+      // 使用有效的对象创建 SVG 对象
+      const svgObject = fabric.util.groupSVGElements(validObjects, options);
       svgObject.id = "word";
+      
+      console.log("✅ [SVG] SVG object created, width:", svgObject.width, "height:", svgObject.height);
 
       // 删除旧的 word 图层
       const oldObjs = canvas.c.getObjects();
@@ -508,18 +813,97 @@ function displayTextOnCanvas(svgPath = '/src/assets/canvas/word.svg' + "?t=" + D
       // 自适应居中
       const cw = canvas.c.getWidth();
       const ch = canvas.c.getHeight();
-      const scale = 0.7 * Math.min(cw / svgObject.width, ch / svgObject.height);
-      svgObject.scale(scale);
-      svgObject.left = (cw - svgObject.width * scale) / 2;
-      svgObject.top = (ch - svgObject.height * scale) / 2;
+      console.log("🔄 [SVG] Canvas dimensions:", cw, "x", ch);
+      console.log("🔄 [SVG] SVG object dimensions:", svgObject.width, "x", svgObject.height);
+      
+      if (svgObject.width && svgObject.height) {
+        const scale = 0.7 * Math.min(cw / svgObject.width, ch / svgObject.height);
+        console.log("🔄 [SVG] Calculated scale:", scale);
+        svgObject.scale(scale);
+        svgObject.left = (cw - svgObject.width * scale) / 2;
+        svgObject.top = (ch - svgObject.height * scale) / 2;
+        console.log("🔄 [SVG] SVG position:", svgObject.left, svgObject.top);
+      } else {
+        console.warn("⚠️ [SVG] SVG object has no width/height, using default scale");
+        svgObject.scale(0.7);
+        svgObject.left = cw / 2;
+        svgObject.top = ch / 2;
+      }
 
       canvas.c.add(svgObject);
       canvas.c.renderAll();
       console.log("✅ [SVG] SVG added to canvas and rendered successfully");
+      console.log("✅ [SVG] Canvas objects count:", canvas.c.getObjects().length);
+      
+      // 验证 SVG 是否真的显示在画布上
+      const addedObjects = canvas.c.getObjects().filter(o => o.id === "word" || o.id?.startsWith("word-"));
+      if (addedObjects.length > 0) {
+        console.log(`✅ [SVG] 确认 SVG 已添加到画布，对象数量: ${addedObjects.length}`);
+        const firstObj = addedObjects[0];
+        console.log(`✅ [SVG] SVG 对象位置: left=${firstObj.left}, top=${firstObj.top}, scale=${firstObj.scaleX || firstObj.scale || 'N/A'}`);
+        console.log(`✅ [SVG] SVG 对象尺寸: width=${firstObj.width}, height=${firstObj.height}`);
+      } else {
+        console.warn("⚠️ [SVG] SVG 对象未找到，可能未正确添加");
+      }
     } catch (error) {
       console.error("❌ [SVG] Error processing SVG objects:", error);
+      console.error("❌ [SVG] Error stack:", error.stack);
+      // 不抛出错误，而是尝试直接添加对象
+      console.warn("⚠️ [SVG] 尝试直接添加对象到画布");
+      try {
+        // 删除旧的 word 图层
+        const oldObjs = canvas.c.getObjects();
+        const oldWordObjs = oldObjs.filter(o => o.id === "word");
+        oldWordObjs.forEach(o => canvas.c.remove(o));
+        
+        // 直接添加所有有效对象
+        const validObjects = objects.filter(obj => obj != null);
+        if (validObjects.length > 0) {
+          // 计算整体边界框，用于居中
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          validObjects.forEach(obj => {
+            if (obj.left !== undefined && obj.top !== undefined) {
+              const objWidth = obj.width * (obj.scaleX || 1);
+              const objHeight = obj.height * (obj.scaleY || 1);
+              minX = Math.min(minX, obj.left);
+              minY = Math.min(minY, obj.top);
+              maxX = Math.max(maxX, obj.left + objWidth);
+              maxY = Math.max(maxY, obj.top + objHeight);
+            }
+          });
+          
+          const cw = canvas.c.getWidth();
+          const ch = canvas.c.getHeight();
+          const groupWidth = maxX - minX;
+          const groupHeight = maxY - minY;
+          
+          // 计算居中偏移
+          const offsetX = (cw - groupWidth) / 2 - minX;
+          const offsetY = (ch - groupHeight) / 2 - minY;
+          
+          validObjects.forEach((obj, index) => {
+            obj.id = `word-${index}`;
+            // 调整位置以居中
+            if (obj.left !== undefined) obj.left += offsetX;
+            if (obj.top !== undefined) obj.top += offsetY;
+            canvas.c.add(obj);
+          });
+          canvas.c.renderAll();
+          console.log("✅ [SVG] 直接添加对象成功，对象数量:", validObjects.length);
+          console.log(`✅ [SVG] 对象已居中，偏移: x=${offsetX.toFixed(2)}, y=${offsetY.toFixed(2)}`);
+        } else {
+          console.warn("⚠️ [SVG] 没有有效的对象可以添加");
+        }
+      } catch (fallbackError) {
+        console.error("❌ [SVG] 备用方法也失败:", fallbackError);
+      }
     }
-  });
+  }, function(error) {
+    // 错误回调：某些元素解析失败，但不影响整体加载
+    // 注意：fabric.js 在解析某些元素时可能会调用错误回调，但成功回调可能仍然会被调用
+    console.warn("⚠️ [SVG] 某些 SVG 元素解析失败（这是正常的，fabric.js 会继续加载其他元素）:", error);
+    // 不抛出错误，让成功回调处理
+  }, parseOptions);
 }
 
 

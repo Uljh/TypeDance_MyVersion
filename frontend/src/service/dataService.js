@@ -23,14 +23,38 @@ export function imageSegment(param, callback) {
     console.log("🟦 [Frontend] mode:", param.mode);
     console.log("🟦 [Frontend] Request URL:", `${T_URL}/image_segment`);
     const url = `${T_URL}/image_segment`;
-    axios.post(url, param)
+    
+    // 增加超时时间到 10 分钟（600秒），因为 SVG 转换可能需要较长时间
+    axios.post(url, param, {
+        timeout: 600000  // 10 分钟超时
+    })
     .then(response => {
         console.log("🟦 [Frontend] Response status:", response.status);
         console.log("🟦 [Frontend] Response data type:", typeof response.data);
+        console.log("🟦 [Frontend] Response data keys:", Object.keys(response.data || {}));
         console.log("🟦 [Frontend] Response data preview:", response.data?.highlight?.substring(0, 50) || response.data?.substring(0, 50) || "No data");
+        
+        // 检查 SVG 内容
+        if (response.data?.svg_content) {
+            console.log("✅ [Frontend] SVG content received, length:", response.data.svg_content.length);
+            console.log("✅ [Frontend] SVG content preview (first 200 chars):", response.data.svg_content.substring(0, 200));
+        } else {
+            console.warn("⚠️ [Frontend] No SVG content in response");
+            if (response.data?.svg_path) {
+                console.log("ℹ️ [Frontend] SVG path available:", response.data.svg_path);
+            }
+        }
+        
         callback(response.data)
-    }, errResponnse => {
-        console.error("❌ [Frontend] Error:", errResponnse);
+    }, errResponse => {
+        console.error("❌ [Frontend] Error:", errResponse);
+        if (errResponse.code === 'ECONNABORTED') {
+            console.error("❌ [Frontend] Request timeout (请求超时)");
+        } else if (errResponse.response) {
+            console.error("❌ [Frontend] Response error:", errResponse.response.status, errResponse.response.data);
+        } else {
+            console.error("❌ [Frontend] Network error:", errResponse.message);
+        }
     })
 }
 

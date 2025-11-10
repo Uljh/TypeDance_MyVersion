@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import numpy as np
 import torch
@@ -149,11 +149,15 @@ else:
 
 app = Flask(__name__)
 # 配置 CORS，允许来自前端的跨域请求
-CORS(app, 
-     resources={r'/*': {'origins': ['http://localhost:3000', 'http://127.0.0.1:3000']}},
-     supports_credentials=True,
-     allow_headers=['Content-Type', 'Authorization'],
-     methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
+# 注意：虽然前端不再发送 Cache-Control 和 Pragma 头，但为了兼容性仍然允许它们
+CORS(app,
+     resources={r'/*': {
+         'origins': ['http://localhost:3000', 'http://127.0.0.1:3000'],
+         'methods': ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
+         'allow_headers': ['Content-Type', 'Authorization', 'Cache-Control', 'Pragma', 'X-API-Key'],
+         'expose_headers': ['Content-Length', 'Last-Modified', 'Content-Type', 'Cache-Control']
+     }},
+     supports_credentials=True)
 
 
 @app.route('/brainstorm',methods=['GET', 'POST'])
@@ -298,34 +302,48 @@ def image_view():
             svg_path = "frontend/public/canvas/word_dynamic.svg"
             
             print("=" * 50)
-            print(f"🔄 [SVG] STEP 1: Calling img_to_svg_api to generate SVG (multi-selection)...")
+            print(f"🔄 [SVG] STEP 1: 准备 SVG 转换 (multi-selection)...")
             print(f"🔄 [SVG] Input: check/remaining_word.png")
             print(f"🔄 [SVG] Output: {svg_path}")
-            img_to_svg_api("check/remaining_word.png", svg_path)
-            print(f"🔄 [SVG] STEP 2: img_to_svg_api completed, checking file: {svg_path}")
+            
+            # ⚠️ 重要：不删除旧文件，而是覆盖（便于调试）
+            # 新文件会直接覆盖旧文件，避免显示缓存的问题通过文件修改时间检测解决
+            if os.path.exists(svg_path):
+                try:
+                    # 记录旧文件的修改时间，用于前端检测新文件
+                    old_mtime = os.path.getmtime(svg_path)
+                    print(f"ℹ️ [SVG] 旧 SVG 文件存在 (multi-selection)，将被新文件覆盖（旧文件修改时间: {old_mtime}）")
+                except Exception as e:
+                    print(f"⚠️ [SVG] 检查旧 SVG 文件失败 (multi-selection): {e}")
+            else:
+                print(f"ℹ️ [SVG] SVG 文件不存在 (multi-selection)，将创建新文件")
+            
+            # 在后台线程中异步调用 SVG 转换，避免阻塞 HTTP 响应
+            import threading
+            def async_svg_conversion():
+                try:
+                    print(f"🔄 [SVG] 开始异步 SVG 转换 (multi-selection)...")
+                    img_to_svg_api("check/remaining_word.png", svg_path)
+                    print(f"✅ [SVG] 异步 SVG 转换完成 (multi-selection): {svg_path}")
+                except Exception as e:
+                    print(f"❌ [SVG] 异步 SVG 转换失败 (multi-selection): {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # 启动异步转换
+            svg_thread = threading.Thread(target=async_svg_conversion, daemon=True)
+            svg_thread.start()
+            print(f"🔄 [SVG] 已启动异步 SVG 转换任务 (multi-selection)")
+            
+            # 不等待转换完成，立即返回响应
+            # 前端将通过 svg_path 加载 SVG 文件，并使用轮询机制等待新文件生成
+            print(f"🔄 [SVG] STEP 2: 不等待转换完成，立即返回响应 (multi-selection)")
+            print(f"ℹ️ [SVG] 前端将通过路径加载新生成的 SVG 文件: {svg_path}")
             print("=" * 50)
             
-            # 检查文件是否存在
-            if os.path.exists(svg_path):
-                print(f"✅ [SVG] File exists (multi-selection), size: {os.path.getsize(svg_path)} bytes")
-            else:
-                print(f"❌ [SVG] File does not exist (multi-selection): {svg_path}")
-            
-            # 读取 SVG 文件内容
+            # ⚠️ 重要：不读取旧的 SVG 文件，让前端等待新文件生成
             svg_content = None
-            try:
-                # 等待一小段时间确保文件写入完成
-                time.sleep(0.5)
-                
-                with open(svg_path, 'r', encoding='utf-8') as f:
-                    svg_content = f.read()
-                print(f"✅ [SVG] SVG content read successfully (multi-selection), length: {len(svg_content)}")
-            except FileNotFoundError as e:
-                print(f"❌ [SVG] File not found (multi-selection): {e}")
-                svg_content = None
-            except Exception as e:
-                print(f"❌ [SVG] Failed to read SVG file (multi-selection): {type(e).__name__}: {e}")
-                svg_content = None
+            print(f"ℹ️ [SVG] 不返回旧的 SVG 内容，前端将等待新文件生成 (multi-selection)")
 
         else:
             box = np.array([input_boxes[0], input_boxes[1], input_boxes[2], input_boxes[3]])
@@ -365,54 +383,80 @@ def image_view():
             svg_path = "frontend/public/canvas/word_dynamic.svg"
             
             print("=" * 50)
-            print(f"🔄 [SVG] STEP 1: Calling img_to_svg_api to generate SVG...")
+            print(f"🔄 [SVG] STEP 1: 准备 SVG 转换...")
             print(f"🔄 [SVG] Input: check/remaining_word.png")
             print(f"🔄 [SVG] Output: {svg_path}")
-            img_to_svg_api("check/remaining_word.png", svg_path)
-            print(f"🔄 [SVG] STEP 2: img_to_svg_api completed, checking file: {svg_path}")
+            
+            # ⚠️ 重要：不删除旧文件，而是覆盖（便于调试）
+            # 新文件会直接覆盖旧文件，避免显示缓存的问题通过文件修改时间检测解决
+            if os.path.exists(svg_path):
+                try:
+                    # 记录旧文件的修改时间，用于前端检测新文件
+                    old_mtime = os.path.getmtime(svg_path)
+                    print(f"ℹ️ [SVG] 旧 SVG 文件存在，将被新文件覆盖（旧文件修改时间: {old_mtime}）")
+                except Exception as e:
+                    print(f"⚠️ [SVG] 检查旧 SVG 文件失败: {e}")
+            else:
+                print(f"ℹ️ [SVG] SVG 文件不存在，将创建新文件")
+            
+            # 在后台线程中异步调用 SVG 转换，避免阻塞 HTTP 响应
+            import threading
+            def async_svg_conversion():
+                try:
+                    print(f"🔄 [SVG] 开始异步 SVG 转换...")
+                    img_to_svg_api("check/remaining_word.png", svg_path)
+                    print(f"✅ [SVG] 异步 SVG 转换完成: {svg_path}")
+                except Exception as e:
+                    print(f"❌ [SVG] 异步 SVG 转换失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # 启动异步转换
+            svg_thread = threading.Thread(target=async_svg_conversion, daemon=True)
+            svg_thread.start()
+            print(f"🔄 [SVG] 已启动异步 SVG 转换任务")
+            
+            # 不等待转换完成，立即返回响应
+            # 前端将通过 svg_path 加载 SVG 文件，并使用轮询机制等待新文件生成
+            print(f"🔄 [SVG] STEP 2: 不等待转换完成，立即返回响应")
+            print(f"ℹ️ [SVG] 前端将通过路径加载新生成的 SVG 文件: {svg_path}")
             print("=" * 50)
             
-            # 检查文件是否存在
-            if os.path.exists(svg_path):
-                print(f"✅ [SVG] File exists, size: {os.path.getsize(svg_path)} bytes")
-            else:
-                print(f"❌ [SVG] File does not exist: {svg_path}")
-            
-            # 读取 SVG 文件内容并返回给前端
+            # ⚠️ 重要：不读取旧的 SVG 文件，让前端等待新文件生成
             svg_content = None
-            try:
-                # 等待一小段时间确保文件写入完成
-                time.sleep(0.5)
-                
-                with open(svg_path, 'r', encoding='utf-8') as f:
-                    svg_content = f.read()
-                print(f"✅ [SVG] SVG content read successfully, length: {len(svg_content)}")
-            except FileNotFoundError as e:
-                print(f"❌ [SVG] File not found: {e}")
-                svg_content = None
-            except Exception as e:
-                print(f"❌ [SVG] Failed to read SVG file: {type(e).__name__}: {e}")
-                svg_content = None
+            print(f"ℹ️ [SVG] 不返回旧的 SVG 内容，前端将等待新文件生成")
 
         # === 前端返回 JSON，包含高亮图 + SVG 内容 ===
         print("=" * 50)
         print(f"🔄 [Response] Preparing response data...")
         print(f"🔄 [Response] svg_content type: {type(svg_content)}, value: {svg_content is not None}")
+        if svg_content:
+            print(f"🔄 [Response] svg_content length: {len(svg_content)}")
+            print(f"🔄 [Response] svg_content preview (first 200 chars): {svg_content[:200]}")
+        
+        # 构建完整的 SVG 文件 URL（使用后端服务器地址）
+        # 注意：这里返回相对路径，前端会添加后端服务器地址
+        svg_relative_path = "/api/svg_image/frontend/public/canvas/word_dynamic.svg"
         
         response_data = {
             "highlight": pil_to_data_uri(image_r),   # 左侧显示高亮笔画
-            "svg_path": "/canvas/word_dynamic.svg",  # 保留路径用于兼容
+            "svg_path": svg_relative_path,  # 使用 API 路由访问 SVG 文件
         }
+        
+        print(f"🔄 [Response] SVG 路径: {svg_relative_path}")
+        print(f"ℹ️ [Response] 前端需要将此路径添加到后端服务器地址: http://127.0.0.1:6006{svg_relative_path}")
         
         # 如果 SVG 内容存在，添加到响应中
         if svg_content:
             response_data["svg_content"] = svg_content
             print(f"✅ [Response] SVG content included in response, length: {len(svg_content)}")
+            print(f"✅ [Response] SVG content starts with: {svg_content[:50]}")
         else:
             print(f"⚠️ [Response] SVG content is None or empty, NOT included in response")
             print(f"⚠️ [Response] This means frontend will try to load from path instead")
         
         print(f"🔄 [Response] Response keys: {list(response_data.keys())}")
+        print(f"🔄 [Response] Response data preview: highlight length={len(response_data['highlight'])}, svg_content={'present' if 'svg_content' in response_data else 'missing'}")
         print("=" * 50)
         
         return jsonify(response_data)
@@ -760,6 +804,157 @@ def refine_img():
     img = RefineOperator(strength, anchor, alt)
 
     return {"dataURL": pil_to_data_uri(img)} 
+
+@app.route('/api/svg_image/<path:filename>', methods=['GET', 'HEAD', 'OPTIONS'])
+def svg_image_service(filename):
+    """
+    提供图片服务，用于 SVG 转换 API
+    允许 API 访问本地图片文件
+    支持 GET（返回文件内容）和 HEAD（只返回头信息）请求
+    """
+    try:
+        import os
+        # 安全地构建文件路径（防止路径遍历攻击）
+        # 只允许访问项目目录下的文件
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(project_root, filename)
+        
+        # 确保文件在项目目录内
+        if not os.path.commonpath([project_root, file_path]) == project_root:
+            return jsonify({"error": "Access denied"}), 403
+        
+        # 检查文件是否存在
+        if not os.path.exists(file_path):
+            print(f"[SVG] 文件服务 - 文件不存在: {filename}")
+            return jsonify({"error": "File not found"}), 404
+        
+        # 根据文件扩展名确定 MIME 类型
+        _, ext = os.path.splitext(filename.lower())
+        mimetype_map = {
+            '.svg': 'image/svg+xml',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp'
+        }
+        mimetype = mimetype_map.get(ext, 'application/octet-stream')
+        
+        # 获取文件修改时间
+        import time
+        from datetime import datetime
+        file_mtime = os.path.getmtime(file_path)
+        file_size = os.path.getsize(file_path)
+        
+        # 设置 Last-Modified 头（使用文件修改时间）
+        from email.utils import formatdate
+        last_modified = formatdate(time.mktime(time.localtime(file_mtime)), usegmt=True)
+        
+        # 创建响应对象
+        if request.method == 'HEAD':
+            # HEAD 请求：只返回头信息，不返回文件内容
+            response = app.response_class()
+            response.headers['Content-Type'] = mimetype
+            response.headers['Content-Length'] = str(file_size)
+            response.headers['Last-Modified'] = last_modified
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+            print(f"[SVG] 文件服务 HEAD - 文件: {filename}, 大小: {file_size} bytes, 修改时间: {last_modified}")
+        else:
+            # GET 请求：返回文件内容
+            response = send_file(file_path, mimetype=mimetype)
+            response.headers['Last-Modified'] = last_modified
+            response.headers['Content-Length'] = str(file_size)
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+            print(f"[SVG] 文件服务 GET - 文件: {filename}, 大小: {file_size} bytes, 修改时间: {last_modified}")
+        
+        return response
+        
+    except Exception as e:
+        print(f"[SVG] 提供图片服务时出现错误: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/svg_callback', methods=['GET', 'POST'])
+def svg_callback():
+    """
+    处理 SVG 转换 API 的回调
+    API 会在转换完成时调用此端点
+    """
+    try:
+        # 记录请求详细信息
+        print(f"[SVG] 收到回调请求:")
+        print(f"  方法: {request.method}")
+        print(f"  URL: {request.url}")
+        print(f"  头部: {dict(request.headers)}")
+        print(f"  参数: {request.args}")
+        print(f"  表单数据: {request.form}")
+        print(f"  JSON: {request.get_json(silent=True)}")
+        
+        callback_data = {}
+        
+        # 优先从查询参数获取（GET 请求）
+        if request.args:
+            callback_data = request.args.to_dict()
+            print(f"[SVG] 从查询参数获取数据: {callback_data}")
+        
+        # 如果查询参数为空，尝试从 JSON 获取（POST 请求）
+        if not callback_data and request.is_json:
+            callback_data = request.get_json()
+            print(f"[SVG] 从 JSON 获取数据: {callback_data}")
+        
+        # 如果还是为空，尝试从表单数据获取（POST 请求）
+        if not callback_data and request.form:
+            callback_data = request.form.to_dict()
+            print(f"[SVG] 从表单数据获取: {callback_data}")
+            # 如果表单数据是 JSON 字符串，解析它
+            if 'data' in callback_data:
+                import json
+                try:
+                    callback_data = json.loads(callback_data['data'])
+                    print(f"[SVG] 解析 JSON 字符串: {callback_data}")
+                except:
+                    pass
+        
+        # 如果还是为空，尝试从请求体获取（原始数据）
+        if not callback_data:
+            try:
+                raw_data = request.get_data(as_text=True)
+                if raw_data:
+                    print(f"[SVG] 原始请求体: {raw_data}")
+                    import json
+                    try:
+                        callback_data = json.loads(raw_data)
+                        print(f"[SVG] 解析原始 JSON: {callback_data}")
+                    except:
+                        # 如果不是 JSON，尝试解析为查询字符串
+                        from urllib.parse import parse_qs
+                        parsed = parse_qs(raw_data)
+                        callback_data = {k: v[0] if len(v) == 1 else v for k, v in parsed.items()}
+                        print(f"[SVG] 解析查询字符串: {callback_data}")
+            except Exception as e:
+                print(f"[SVG] 解析请求体失败: {e}")
+        
+        print(f"[SVG] 最终回调数据: {callback_data}")
+        
+        # 处理回调
+        from utils import handle_svg_callback
+        success = handle_svg_callback(callback_data)
+        
+        if success:
+            return jsonify({"status": "ok"}), 200
+        else:
+            return jsonify({"status": "error", "message": "回调处理失败"}), 400
+            
+    except Exception as e:
+        print(f"[SVG] 处理回调时出现错误: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 # if __name__ == '__main__':
 #     app.run(host='127.0.0.1', port=88, debug=True)
