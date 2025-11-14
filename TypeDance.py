@@ -465,6 +465,21 @@ def image_view():
 
 @app.route('/image_extract',methods=['GET', 'POST'])
 def image_extract():
+    # ⚠️ 重要：保存用户上传的概念图像（彩色）为concept_image.png，供generate.py使用
+    # 从check/from_interface.png（用户上传的图片）读取并保存为check/concept_image.png
+    from_interface_path = "check/from_interface.png"
+    concept_image_path = "check/concept_image.png"
+    if os.path.exists(from_interface_path):
+        try:
+            original_concept_img = Image.open(from_interface_path).convert("RGB")
+            original_concept_img.save(concept_image_path)
+            print(f"[INFO] 🎨 已保存用户上传的概念图像（彩色）: {concept_image_path}")
+            print(f"[INFO] 🎨 从 {from_interface_path} 读取并保存为 {concept_image_path}")
+        except Exception as e:
+            print(f"[WARN] ⚠️ 无法保存概念图像: {e}")
+    else:
+        print(f"[WARN] ⚠️ 用户上传的图片不存在: {from_interface_path}")
+    
     image_r = Image.open("check/img_segment.png")
     img_contour = Image.open("check/img_segment_contour.png").convert("RGBA")
     img_mask = Image.open("check/img_mask.png").convert("RGBA")

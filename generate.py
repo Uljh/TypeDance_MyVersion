@@ -449,26 +449,38 @@ class Generation:
         
         return img_list, mode_list
 
-    def color_generation(self, prompts, n_propmts, init_image, id, FLAG_shape):
+    def color_generation(self, prompts, n_propmts, init_image, id, FLAG_shape, strength_factor=1.0):
         # 确保目录存在
         os.makedirs("check/color_generation", exist_ok=True)
         
         seed = random.randint(0,99999999)
         Generator = torch.Generator(device="cuda").manual_seed(seed)
         # 只生成一个
-        # ⚠️ 重要：为了更好应用颜色，提高strength，让颜色更明显
+        # ⚠️ 重要：为了保持字体形状清晰，使用较低的strength
+        # strength_factor用于调整strength的倍数（默认1.0）
         if FLAG_shape:
-            # 对于形状模式，使用中等strength
-            strength = random.random()*(0.50-0.35)+0.35  # 从0.16-0.30提高到0.35-0.50
+            # 对于形状模式，使用较低strength以保持字体形状
+            base_strength = random.random()*(0.45-0.35)+0.35  # 0.35-0.45
         else:
-            # 对于非形状模式，使用较高strength以更好应用颜色
-            strength = random.random()*(0.75-0.60)+0.60  # 从0.45-0.60提高到0.60-0.75
-        # ⚠️ 增强prompt，明确要求保留和应用颜色
+            # 对于非形状模式，使用中等strength以融合元素，同时保持字体形状
+            base_strength = random.random()*(0.55-0.45)+0.45  # 0.45-0.55
+        strength = base_strength * strength_factor
+        # 限制strength在合理范围内，确保字体形状清晰
+        strength = min(max(strength, 0.25), 0.65)
+        
+        # ⚠️ 增强prompt，明确要求保留字体形状和应用概念图像的元素（颜色、纹理、细节等）
         color_prompt = prompts if isinstance(prompts, str) else prompts[0] if isinstance(prompts, list) else str(prompts)
-        # 如果prompt中没有明确的颜色相关词汇，添加颜色提示
+        # 如果prompt中没有明确的颜色和细节相关词汇，添加提示
         if "color" not in color_prompt.lower() and "colour" not in color_prompt.lower():
-            color_prompt = color_prompt + ", vibrant colors, colorful, rich colors, detailed colors"
-        print(f"[INFO] 🎨 颜色生成 - strength: {strength:.2f}, prompt: {color_prompt[:100]}...")
+            color_prompt = color_prompt + ", vibrant colors, colorful, rich colors, detailed colors, textures"
+        if "element" not in color_prompt.lower() and "detail" not in color_prompt.lower():
+            color_prompt = color_prompt + ", detailed elements, fine details"
+        # ⚠️ 重要：添加提示，要求保持字体形状清晰，同时融入概念图像的元素
+        if "font" not in color_prompt.lower() and "typography" not in color_prompt.lower():
+            color_prompt = color_prompt + ", maintain font shape, clear typography, preserve letterform"
+        if "integrated" not in color_prompt.lower() and "merged" not in color_prompt.lower():
+            color_prompt = color_prompt + ", elements integrated into font shape"
+        print(f"[INFO] 🎨 元素融合生成 - strength: {strength:.2f}, prompt: {color_prompt[:120]}...")
         images_img2img = pipe_img2img_art(prompt=color_prompt, negative_prompt=n_propmts, image=init_image, strength=strength, 
                                     guidance_scale=7.5, generator=Generator).images[0]
         # images_r = image_grid(images_img2img, 1, len(images_img2img))
@@ -476,16 +488,36 @@ class Generation:
         return images_img2img
 
     def scale_concept_img(self, img_RGBA, concept_image):
+        # ⚠️ get_rgba_border 现在可以处理 RGB 图像，所以不需要提前转换
+        # 但是对于后续的 crop 操作，我们需要确保图像格式正确
+        
         (left, top, right, bottom) = get_rgba_border(img_RGBA)
         width_black_img = right - left
         height_black_img = bottom - top
+        
+        # 获取概念图像的边界（get_rgba_border 可以处理 RGB 图像）
         (left, top, right, bottom) = get_rgba_border(concept_image)
-        concept_image_crop = concept_image.crop((left, top, right, bottom))
+        
+        # 如果边界无效，使用整个图像
+        if left >= right or top >= bottom:
+            concept_image_crop = concept_image
+        else:
+            # 裁剪概念图像
+            # 如果概念图像是 RGB，需要先转换才能正确 crop（虽然 crop 也可以处理 RGB）
+            concept_image_crop = concept_image.crop((left, top, right, bottom))
+        
+        # 调整大小
         concept_image_scale = concept_image_crop.resize((width_black_img, height_black_img))
 
+        # 创建 RGBA 背景
         bg_rgba = Image.new("RGBA", (512, 512), (0,0,0,0))
         x = (bg_rgba.width - width_black_img) // 2
         y = (bg_rgba.height - height_black_img) // 2
+        
+        # 如果概念图像是 RGB，需要转换为 RGBA 才能粘贴到 RGBA 背景上
+        if concept_image_scale.mode != "RGBA":
+            concept_image_scale = concept_image_scale.convert("RGBA")
+        
         bg_rgba.paste(concept_image_scale , (x, y)) # 左上角的坐标
         return bg_rgba
  
@@ -496,6 +528,38 @@ class Generation:
         new_array = np.dstack((rgb_array , alpha_channel))
         new_image = Image.fromarray((new_array).astype(np.uint8))
         return new_image
+    
+    def apply_mask_to_image(self, img_rgb, mask_rgba):
+        """
+        将mask应用到RGB图像上，返回RGBA图像
+        只有在mask区域内的像素才会保留，其他区域变为透明
+        """
+        # 确保输入格式正确
+        if img_rgb.mode != "RGB":
+            img_rgb = img_rgb.convert("RGB")
+        if mask_rgba.mode != "RGBA":
+            mask_rgba = mask_rgba.convert("RGBA")
+        
+        # 调整mask大小以匹配图像
+        if mask_rgba.size != img_rgb.size:
+            print(f"[INFO] 🎨 调整mask大小: {mask_rgba.size} -> {img_rgb.size}")
+            mask_rgba = mask_rgba.resize(img_rgb.size, Image.Resampling.LANCZOS)
+        
+        # 转换为numpy数组
+        img_array = np.array(img_rgb)
+        mask_array = np.array(mask_rgba)
+        
+        # 提取mask的alpha通道
+        mask_alpha = mask_array[:, :, 3]  # 提取alpha通道 (H, W)
+        
+        # 创建结果数组
+        result_array = np.zeros((img_array.shape[0], img_array.shape[1], 4), dtype=np.uint8)
+        result_array[:, :, :3] = img_array  # RGB通道
+        result_array[:, :, 3] = mask_alpha  # Alpha通道（只在mask区域内保留颜色）
+        
+        result_image = Image.fromarray(result_array, mode="RGBA")
+        
+        return result_image
     
     # ======== wrap得到的svg转成png ========
     def svg_to_png(self, input_svg_path, output_png_path):
@@ -541,6 +605,21 @@ class Generation:
         current_path = os.path.dirname(os.path.abspath(__file__)) #即 D:\TypeDance_Doc\TypeDance
         img_word_list = []
         FLAG_shape = False
+        # ⚠️ 重要：加载原始概念图像（彩色），用于元素融合和颜色提取
+        # img_mask 是黑白掩码，不适合提取颜色
+        # 使用concept_image.png避免与用户上传的img_segment.png（切割字体图片）冲突
+        concept_img_path = os.path.join(current_path, "check", "concept_image.png")
+        if os.path.exists(concept_img_path):
+            try:
+                original_concept_img = Image.open(concept_img_path).convert("RGB")
+                print(f"[INFO] 🎨 成功加载原始概念图像（彩色）: {concept_img_path}")
+            except Exception as e:
+                print(f"[WARN] ⚠️ 无法加载原始概念图像: {e}，将使用img_mask")
+                original_concept_img = img_mask.convert("RGB")
+        else:
+            print(f"[WARN] ⚠️ 原始概念图像不存在: {concept_img_path}，将使用img_mask")
+            print(f"[WARN] ⚠️ 提示：请确保原始概念图像（彩色）已保存为: {concept_img_path}")
+            original_concept_img = img_mask.convert("RGB")
         # ==================== shape ====================
         # 如果shape存在就要替换掉img_word,变成wrap版本
         if "shape" in option_list:
@@ -640,48 +719,90 @@ class Generation:
 
         # ==================== color ==================== 
         if "color" in option_list:
-            print("[INFO] 🎨 开始颜色生成处理...")
+            print("[INFO] 🎨 开始颜色和元素融合处理...")
+            print(f"[INFO] 🎨 将原始概念图像的元素（窗口、花朵等）融入到分割字体形状中")
+            print(f"[INFO] ⚠️ 重要：使用原始分割字体（img_word）作为基础，保持字体形状清晰")
+            
+            # ⚠️ 关键：使用原始分割字体（img_word）作为基础，而不是生成后的图像
+            # 从原始的img_word生成字体mask
+            original_font_mask = bg_removal(img_word, current_path)
+            print(f"[INFO] 🎨 保存原始分割字体mask，用于限制元素应用区域")
+            
+            # ⚠️ 重要：使用原始分割字体（img_word）进行概念图像的缩放和对齐
+            # 这样概念图像的元素会直接应用到分割字体的形状上
+            concept_img_scaled = self.scale_concept_img(original_font_mask, original_concept_img)
+            print(f"[INFO] 🎨 概念图像已缩放和对齐到分割字体形状...")
+            
+            # 将概念图像转换为RGB
+            concept_img_rgb = concept_img_scaled.convert("RGB")
+            # 调整概念图像大小以匹配字体图像（512x512）
+            if concept_img_rgb.size != (512, 512):
+                concept_img_rgb = concept_img_rgb.resize((512, 512), Image.Resampling.LANCZOS)
+            
+            # ⚠️ 关键：将概念图像的元素限制在原始分割字体形状内
+            # 使用原始字体mask将概念图像的元素限制在字体区域内
+            concept_img_with_mask = self.apply_mask_to_image(concept_img_rgb, original_font_mask)
+            concept_img_masked_rgb = concept_img_with_mask.convert("RGB")
+            print(f"[INFO] 🎨 概念图像元素已限制在分割字体形状内")
+            
             for i, word_copncept_image in enumerate(img_list):
-                # load image
-                concept_image = img_mask
-                # processing: word_copncept_image -> removal, concept_img_scaled->scale
-                img_RGBA = bg_removal(word_copncept_image, current_path)
-                concept_img_scaled = self.scale_concept_img(img_RGBA, concept_image)
-                # get color from concept_img
-                # ColorThief 需要文件路径，不能直接使用 PIL Image 对象
-                # 先将图像保存到临时文件
-                temp_color_path = f"check/temp_color_refine_{i}.png"
-                os.makedirs("check", exist_ok=True)
-                concept_img_scaled.save(temp_color_path)
+                # ⚠️ 重要：使用原始分割字体（img_word）作为基础，而不是word_copncept_image
+                # 将原始分割字体与概念图像的元素结合
+                # 使用原始分割字体作为基础，将概念图像的元素融入其中
+                img_word_rgba = bg_removal(img_word, current_path)
+                img_r = self.add_alpha(img_word_rgba, img_word)
+                img_r = add_bg_color(img_r, [255,255,255])
+                
+                # 将概念图像的元素叠加到原始分割字体上
+                # 使用较低的alpha值（0.4-0.5），保持字体形状清晰
+                # 这样可以让概念图像的元素融入到字体中，同时保持字体的原始形状
+                concept_img_aligned = concept_img_masked_rgb
+                if concept_img_aligned.size != img_r.size:
+                    concept_img_aligned = concept_img_aligned.resize(img_r.size, Image.Resampling.LANCZOS)
+                
+                # ⚠️ 关键：使用较低的alpha值（0.45），保持字体形状清晰
+                # 将概念图像的元素与原始分割字体混合
+                img_blend = Image.blend(img_r, concept_img_aligned, alpha=0.45)
+                img_blend.save(f"check/color_generation/blend_input_{i}.png")
+                print(f"[INFO] 🎨 融合输入图像已保存: check/color_generation/blend_input_{i}.png")
+                print(f"[INFO] 🎨 融合输入图像大小: {img_blend.size}, 概念图像大小: {concept_img_aligned.size}")
+                print(f"[INFO] 🎨 概念图像元素已与原始分割字体混合，准备融合...")
+                
+                # ⚠️ 重要：使用较低的strength来保持字体形状清晰
+                # strength应该较低（0.5-0.6），让概念图像的元素融入到字体中，但保持字体形状
+                # 使用较低的strength_factor（0.55-0.65）来更好地保持字体形状
+                strength_factor = 0.55 if FLAG_shape else 0.60
+                image_fused = self.color_generation(prompt_, n_propmt, img_blend, i, FLAG_shape, strength_factor=strength_factor)
+                print(f"[INFO] 🎨 概念图像元素已融合到字体中 (strength_factor: {strength_factor})")
+                
+                # ⚠️ 关键：使用原始分割字体mask限制元素只在字体区域内，生成个性化字体
+                print(f"[INFO] 🎨 使用原始分割字体mask将融合后的元素应用到字体形状...")
+                print(f"[INFO] 🎨 融合后的图像大小: {image_fused.size}, 原始字体mask大小: {original_font_mask.size}")
                 try:
-                    color_thief = ColorThief(temp_color_path)
-                    main_color = color_thief.get_color()
-                    print(f"[INFO] 🎨 从概念图像提取的主要颜色 (RGB): {main_color}")
+                    # 方法1：使用原始分割字体mask限制元素只在字体区域内
+                    img_fused_with_mask = self.apply_mask_to_image(image_fused, original_font_mask)
+                    # 保存调试图像
+                    img_fused_with_mask.save(f"check/debug_fused_with_mask_{i}.png")
+                    print(f"[INFO] 🎨 调试：已保存应用mask后的图像: check/debug_fused_with_mask_{i}.png")
+                    # 提取字体元素（去除背景，只保留字体部分）
+                    element = crop_element_from_RGBA(img_fused_with_mask, crop = False)
+                    img_list[i] = element
+                    print(f"[INFO] ✅ 概念图像元素已融合到分割字体形状 - 图像 {i+1}/{len(img_list)}")
                 except Exception as e:
-                    print(f"[WARN] ⚠️ 颜色提取失败: {e}，使用默认颜色")
-                    main_color = (128, 128, 128)  # 默认灰色
-                finally:
-                    # 清理临时文件
-                    if os.path.exists(temp_color_path):
-                        try:
-                            os.remove(temp_color_path)
-                        except:
-                            pass  # 忽略删除失败
-                image_bg_color = add_bg_color(concept_img_scaled, main_color)
-                img_r = self.add_alpha(img_RGBA, image_bg_color)
-                image_color = add_bg_color(img_r, [255,255,255])
-                image_color.save("check/img_color_grid.png")
-                print(f"[INFO] 🎨 颜色参考图像已保存: check/img_color_grid.png")
-                # word_copncept_image -- canny
-                # image_arr = colorizer(word_copncept_image, image_color)
-                # img_rgb = Image.fromarray(image_arr)
-                # image = self.add_alpha(img_RGBA, img_rgb)
-                # ⚠️ 重要：使用增强的prompt和更高的strength来应用颜色
-                image_color = self.color_generation(prompt_, n_propmt, image_color, i, FLAG_shape)
-                # img_RGBA = bg_removal(image_color, current_path)
-                # element = crop_element_from_RGBA(img_RGBA)
-                img_list[i] = image_color
-                print(f"[INFO] ✅ 颜色生成完成 - 图像 {i+1}/{len(img_list)}")
+                    print(f"[WARN] ⚠️ 使用原始分割字体mask提取字体形状失败: {e}，尝试使用bg_removal...")
+                    import traceback
+                    traceback.print_exc()
+                    try:
+                        # 备用方法1：使用bg_removal提取字体区域
+                        img_fused_RGBA = bg_removal(image_fused, current_path)
+                        element = crop_element_from_RGBA(img_fused_RGBA, crop = False)
+                        img_list[i] = element
+                        print(f"[INFO] ✅ 使用bg_removal提取字体形状成功 - 图像 {i+1}/{len(img_list)}")
+                    except Exception as e2:
+                        print(f"[WARN] ⚠️ bg_removal也失败: {e2}，使用原始分割字体")
+                        # 如果都失败，使用原始分割字体
+                        img_list[i] = img_word
+                print(f"[INFO] ✅ 颜色和元素融合完成 - 图像 {i+1}/{len(img_list)}")
             if len(option_list)==1 or (len(option_list)==2 and "semantic" in option_list):
                 return img_list, mode_list, alt
 
@@ -753,7 +874,22 @@ class Feedback(Generation):
         # 2. feedback prompt
         # 3. mode
         clear_folder()
-
+        current_path = os.path.dirname(os.path.abspath(__file__))
+        # ⚠️ 重要：加载原始概念图像（彩色），用于元素融合和颜色提取
+        # img_mask 是黑白掩码，不适合提取颜色
+        # 使用concept_image.png避免与用户上传的img_segment.png（切割字体图片）冲突
+        concept_img_path = os.path.join(current_path, "check", "concept_image.png")
+        if os.path.exists(concept_img_path):
+            try:
+                original_concept_img = Image.open(concept_img_path).convert("RGB")
+                print(f"[INFO] 🎨 成功加载原始概念图像（彩色）: {concept_img_path}")
+            except Exception as e:
+                print(f"[WARN] ⚠️ 无法加载原始概念图像: {e}，将使用img_mask")
+                original_concept_img = img_mask.convert("RGB")
+        else:
+            print(f"[WARN] ⚠️ 原始概念图像不存在: {concept_img_path}，将使用img_mask")
+            print(f"[WARN] ⚠️ 提示：请确保原始概念图像（彩色）已保存为: {concept_img_path}")
+            original_concept_img = img_mask.convert("RGB")
 
         # ============== step 1: get feedback objects ==============
         current_mode = self.get_feedback_mode(previous_mode)
@@ -819,50 +955,70 @@ class Feedback(Generation):
 
         # ==================== color ==================== 
         if "color" in option_list:
-            print("[INFO] 🎨 开始颜色生成处理 (Feedback模式)...")
+            print("[INFO] 🎨 开始颜色和元素融合处理 (Feedback模式)...")
+            print(f"[INFO] 🎨 将原始概念图像的元素（窗口、花朵等）融入到分割字体形状中")
+            print(f"[INFO] ⚠️ 重要：使用原始分割字体（img_word）作为基础，保持字体形状清晰")
+            
+            # ⚠️ 关键：使用原始分割字体（img_word）作为基础
+            # 从原始的img_word生成字体mask
+            original_font_mask = bg_removal(img_word, current_path)
+            print(f"[INFO] 🎨 保存原始分割字体mask，用于限制元素应用区域")
+            
+            # ⚠️ 重要：使用原始分割字体（img_word）进行概念图像的缩放和对齐
+            concept_img_scaled = self.scale_concept_img(original_font_mask, original_concept_img)
+            print(f"[INFO] 🎨 概念图像已缩放和对齐到分割字体形状...")
+            
+            # 将概念图像转换为RGB
+            concept_img_rgb = concept_img_scaled.convert("RGB")
+            # 调整概念图像大小以匹配字体图像（512x512）
+            if concept_img_rgb.size != (512, 512):
+                concept_img_rgb = concept_img_rgb.resize((512, 512), Image.Resampling.LANCZOS)
+            
+            # ⚠️ 关键：将概念图像的元素限制在原始分割字体形状内
+            concept_img_with_mask = self.apply_mask_to_image(concept_img_rgb, original_font_mask)
+            concept_img_masked_rgb = concept_img_with_mask.convert("RGB")
+            print(f"[INFO] 🎨 概念图像元素已限制在分割字体形状内")
+            
             for i, word_copncept_image in enumerate(img_list):
-                # load image
-                concept_image = img_mask
-                # processing: word_copncept_image -> removal, concept_img_scaled->scale
-                img_RGBA = bg_removal(word_copncept_image, current_path)
-                concept_img_scaled = self.scale_concept_img(img_RGBA, concept_image)
-                # get color from concept_img
-                # ColorThief 需要文件路径，不能直接使用 PIL Image 对象
-                # 先将图像保存到临时文件
-                temp_color_path = f"check/temp_color_feedback_{i}.png"
-                os.makedirs("check", exist_ok=True)
-                concept_img_scaled.save(temp_color_path)
+                # ⚠️ 重要：使用原始分割字体（img_word）作为基础，而不是word_copncept_image
+                img_word_rgba = bg_removal(img_word, current_path)
+                img_r = self.add_alpha(img_word_rgba, img_word)
+                img_r = add_bg_color(img_r, [255,255,255])
+                
+                # 将概念图像的元素叠加到原始分割字体上
+                concept_img_aligned = concept_img_masked_rgb
+                if concept_img_aligned.size != img_r.size:
+                    concept_img_aligned = concept_img_aligned.resize(img_r.size, Image.Resampling.LANCZOS)
+                
+                # ⚠️ 关键：使用较低的alpha值（0.45），保持字体形状清晰
+                img_blend = Image.blend(img_r, concept_img_aligned, alpha=0.45)
+                img_blend.save(f"check/color_generation/blend_input_feedback_{i}.png")
+                print(f"[INFO] 🎨 融合输入图像已保存 (Feedback): check/color_generation/blend_input_feedback_{i}.png")
+                print(f"[INFO] 🎨 概念图像元素已与原始分割字体混合，准备融合...")
+                
+                # ⚠️ 重要：使用较低的strength来保持字体形状清晰
+                # 对于Feedback模式，使用较低的strength_factor（0.60）来保持字体形状
+                image_fused = self.color_generation(final_prompts[0], n_propmt, img_blend, i, FLAG_shape=False, strength_factor=0.60)
+                print(f"[INFO] 🎨 概念图像元素已融合到字体中 (Feedback, strength_factor: 0.60)")
+                
+                # ⚠️ 关键：使用原始分割字体mask限制元素只在字体区域内
                 try:
-                    color_thief = ColorThief(temp_color_path)
-                    main_color = color_thief.get_color()
-                    print(f"[INFO] 🎨 从概念图像提取的主要颜色 (RGB): {main_color}")
+                    img_fused_with_mask = self.apply_mask_to_image(image_fused, original_font_mask)
+                    element = crop_element_from_RGBA(img_fused_with_mask, crop = False)
+                    images_rm_list.append(element)
+                    print(f"[INFO] ✅ 概念图像元素已融合到分割字体形状 (Feedback) - 图像 {i+1}/{len(img_list)}")
                 except Exception as e:
-                    print(f"[WARN] ⚠️ 颜色提取失败: {e}，使用默认颜色")
-                    main_color = (128, 128, 128)  # 默认灰色
-                finally:
-                    # 清理临时文件
-                    if os.path.exists(temp_color_path):
-                        try:
-                            os.remove(temp_color_path)
-                        except:
-                            pass  # 忽略删除失败
-                image_bg_color = add_bg_color(concept_img_scaled, main_color)
-                img_r = self.add_alpha(img_RGBA, image_bg_color)
-                image_color = add_bg_color(img_r, [255,255,255])
-                image_color.save("check/img_color_grid.png")
-                print(f"[INFO] 🎨 颜色参考图像已保存 (Feedback): check/img_color_grid.png")
-                # word_copncept_image -- canny
-                # image_arr = colorizer(word_copncept_image, image_color)
-                # img_rgb = Image.fromarray(image_arr)
-                # image = self.add_alpha(img_RGBA, img_rgb)
-                # ⚠️ 重要：使用增强的prompt和更高的strength来应用颜色
-                image_color = self.color_generation(final_prompts[0], n_propmt, image_color, i, FLAG_shape=False)
-                img_RGBA = bg_removal(image_color, current_path)
-                element = crop_element_from_RGBA(img_RGBA, crop = False)
-                images_rm_list.append(element)
-                print(f"[INFO] ✅ 颜色生成完成 (Feedback) - 图像 {i+1}/{len(img_list)}")
-            if len(option_list)==1 or (len(option_list)==2 and "semantic" in option_list):
-                return img_list, mode_list, alt
+                    print(f"[WARN] ⚠️ 使用原始分割字体mask提取字体形状失败: {e}，尝试使用bg_removal...")
+                    try:
+                        img_fused_RGBA = bg_removal(image_fused, current_path)
+                        element = crop_element_from_RGBA(img_fused_RGBA, crop = False)
+                        images_rm_list.append(element)
+                        print(f"[INFO] ✅ 使用bg_removal提取字体形状成功 (Feedback) - 图像 {i+1}/{len(img_list)}")
+                    except Exception as e2:
+                        print(f"[WARN] ⚠️ bg_removal也失败: {e2}，使用原始分割字体")
+                        images_rm_list.append(img_word)
+                print(f"[INFO] ✅ 颜色和元素融合完成 (Feedback) - 图像 {i+1}/{len(img_list)}")
+            return images_rm_list, mode_list, alt
 
 
 

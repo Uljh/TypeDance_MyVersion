@@ -58,7 +58,7 @@ def img_to_svg_api(img_path, output_path, callback_base_url=None):
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     
     # API 配置
-    api_key = "OIWpUg6H6qgaAQiu9LmrY8xoOaJsTZFO2nbi"
+    api_key = "8ERzVP4vElaPkyzcG1Zj4qHcw5ur2IkCoFrg"
     api_url = "https://imageapi.ai-gs.cn/v1/vector"
     
     # 创建输出目录
@@ -938,14 +938,54 @@ def add_text_to_img(keyword):
 
 
 def get_rgba_border(img_rgba):
+    # ⚠️ 处理不同格式的图像
+    original_mode = img_rgba.mode
+    
+    # 对于RGB图像，先检查是否需要转换为RGBA
+    # 但如果原始是RGB，我们需要特殊处理（检查非白色区域）
+    if img_rgba.mode == "RGB":
+        # RGB图像：检查非白色区域（假设白色是背景）
+        left, top, right, bottom = img_rgba.width, img_rgba.height, 0, 0 
+        for x in range(img_rgba.width): 
+            for y in range(img_rgba.height): 
+                pixel = img_rgba.getpixel((x, y))
+                # RGB像素是 (r, g, b) 元组
+                if len(pixel) >= 3:
+                    r, g, b = pixel[0], pixel[1], pixel[2]
+                    # 如果不是白色背景（允许一些容差，处理接近白色的情况）
+                    if not (r > 250 and g > 250 and b > 250):
+                        left = min(left, x) 
+                        top = min(top, y) 
+                        right = max(right, x) 
+                        bottom = max(bottom, y)
+        
+        # 如果所有像素都是背景（无效），返回整个图像的边界
+        if left >= right or top >= bottom:
+            return (0, 0, img_rgba.width, img_rgba.height)
+        
+        return (left, top, right, bottom)
+    
+    # 对于非RGB图像，转换为RGBA格式
+    if img_rgba.mode != "RGBA":
+        # 其他格式，先转换为 RGB，再转换为 RGBA
+        img_rgba = img_rgba.convert("RGB").convert("RGBA")
+    
+    # RGBA图像：检查alpha通道
     left, top, right, bottom = img_rgba.width, img_rgba.height, 0, 0 
     for x in range(img_rgba.width): 
         for y in range(img_rgba.height): 
-            if img_rgba.getpixel((x, y))[3] != 0: 
+            pixel = img_rgba.getpixel((x, y))
+            # 确保像素值有 alpha 通道
+            if len(pixel) >= 4 and pixel[3] != 0: 
                 left = min(left, x) 
                 top = min(top, y) 
                 right = max(right, x) 
-                bottom = max(bottom, y) 
+                bottom = max(bottom, y)
+    
+    # 如果所有像素都是背景（无效），返回整个图像的边界
+    if left >= right or top >= bottom:
+        return (0, 0, img_rgba.width, img_rgba.height)
+    
     return (left, top, right, bottom)
 
 def get_rgb_border(img_rgb): 
