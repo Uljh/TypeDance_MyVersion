@@ -720,8 +720,11 @@ class Generation:
         # ==================== color ==================== 
         if "color" in option_list:
             print("[INFO] 🎨 开始颜色和元素融合处理...")
-            print(f"[INFO] 🎨 将原始概念图像的元素（窗口、花朵等）融入到分割字体形状中")
-            print(f"[INFO] ⚠️ 重要：使用原始分割字体（img_word）作为基础，保持字体形状清晰")
+            print(f"[INFO] 🎨 将原始概念图像的元素融入到字体形状中")
+            if "semantic" in option_list:
+                print(f"[INFO] ⚠️ 重要：将概念图像元素融合到语义生成后的图像上（保持语义元素）")
+            else:
+                print(f"[INFO] ⚠️ 重要：将概念图像元素融合到原始分割字体上")
             
             # ⚠️ 关键：使用原始分割字体（img_word）作为基础，而不是生成后的图像
             # 从原始的img_word生成字体mask
@@ -746,27 +749,43 @@ class Generation:
             print(f"[INFO] 🎨 概念图像元素已限制在分割字体形状内")
             
             for i, word_copncept_image in enumerate(img_list):
-                # ⚠️ 重要：使用原始分割字体（img_word）作为基础，而不是word_copncept_image
-                # 将原始分割字体与概念图像的元素结合
-                # 使用原始分割字体作为基础，将概念图像的元素融入其中
-                img_word_rgba = bg_removal(img_word, current_path)
-                img_r = self.add_alpha(img_word_rgba, img_word)
-                img_r = add_bg_color(img_r, [255,255,255])
+                # ⚠️ 修复：应该使用语义生成后的图像（word_copncept_image）作为基础
+                # 如果同时使用了semantic和color选项，word_copncept_image已经包含了语义元素
+                # 应该将概念图像的元素融合到语义生成的图像上，而不是原始分割字体
                 
-                # 将概念图像的元素叠加到原始分割字体上
+                # 检查是否有语义选项，如果有则使用语义生成后的图像作为基础
+                if "semantic" in option_list:
+                    # 使用语义生成后的图像作为基础
+                    print(f"[INFO] 🎨 使用语义生成后的图像（已包含语义元素）作为融合基础")
+                    base_img_rgba = bg_removal(word_copncept_image, current_path)
+                    img_r = self.add_alpha(base_img_rgba, word_copncept_image)
+                    img_r = add_bg_color(img_r, [255,255,255])
+                else:
+                    # 如果没有语义选项，使用原始分割字体作为基础
+                    print(f"[INFO] 🎨 使用原始分割字体作为融合基础")
+                    img_word_rgba = bg_removal(img_word, current_path)
+                    img_r = self.add_alpha(img_word_rgba, img_word)
+                    img_r = add_bg_color(img_r, [255,255,255])
+                
+                # 将概念图像的元素叠加到基础图像上
                 # 使用较低的alpha值（0.4-0.5），保持字体形状清晰
-                # 这样可以让概念图像的元素融入到字体中，同时保持字体的原始形状
+                # 这样可以让概念图像的元素融入到基础图像中，同时保持字体的形状
                 concept_img_aligned = concept_img_masked_rgb
                 if concept_img_aligned.size != img_r.size:
                     concept_img_aligned = concept_img_aligned.resize(img_r.size, Image.Resampling.LANCZOS)
                 
-                # ⚠️ 关键：使用较低的alpha值（0.45），保持字体形状清晰
-                # 将概念图像的元素与原始分割字体混合
+                # ⚠️ 关键：使用较低的alpha值（0.45），让概念图像的元素与基础图像混合
+                # Image.blend(image1, image2, alpha) = (1-alpha) * image1 + alpha * image2
+                # 这里 image1 是基础图像（语义生成的图像或原始字体），image2 是概念图像
+                # alpha=0.45 意味着：55% 基础图像 + 45% 概念图像
                 img_blend = Image.blend(img_r, concept_img_aligned, alpha=0.45)
                 img_blend.save(f"check/color_generation/blend_input_{i}.png")
                 print(f"[INFO] 🎨 融合输入图像已保存: check/color_generation/blend_input_{i}.png")
                 print(f"[INFO] 🎨 融合输入图像大小: {img_blend.size}, 概念图像大小: {concept_img_aligned.size}")
-                print(f"[INFO] 🎨 概念图像元素已与原始分割字体混合，准备融合...")
+                if "semantic" in option_list:
+                    print(f"[INFO] 🎨 概念图像元素已与语义生成的图像混合，准备融合...")
+                else:
+                    print(f"[INFO] 🎨 概念图像元素已与原始分割字体混合，准备融合...")
                 
                 # ⚠️ 重要：使用较低的strength来保持字体形状清晰
                 # strength应该较低（0.5-0.6），让概念图像的元素融入到字体中，但保持字体形状
@@ -956,8 +975,11 @@ class Feedback(Generation):
         # ==================== color ==================== 
         if "color" in option_list:
             print("[INFO] 🎨 开始颜色和元素融合处理 (Feedback模式)...")
-            print(f"[INFO] 🎨 将原始概念图像的元素（窗口、花朵等）融入到分割字体形状中")
-            print(f"[INFO] ⚠️ 重要：使用原始分割字体（img_word）作为基础，保持字体形状清晰")
+            print(f"[INFO] 🎨 将原始概念图像的元素融入到字体形状中")
+            if "semantic" in option_list:
+                print(f"[INFO] ⚠️ 重要：将概念图像元素融合到语义生成后的图像上（保持语义元素）(Feedback)")
+            else:
+                print(f"[INFO] ⚠️ 重要：将概念图像元素融合到原始分割字体上 (Feedback)")
             
             # ⚠️ 关键：使用原始分割字体（img_word）作为基础
             # 从原始的img_word生成字体mask
@@ -980,21 +1002,40 @@ class Feedback(Generation):
             print(f"[INFO] 🎨 概念图像元素已限制在分割字体形状内")
             
             for i, word_copncept_image in enumerate(img_list):
-                # ⚠️ 重要：使用原始分割字体（img_word）作为基础，而不是word_copncept_image
-                img_word_rgba = bg_removal(img_word, current_path)
-                img_r = self.add_alpha(img_word_rgba, img_word)
-                img_r = add_bg_color(img_r, [255,255,255])
+                # ⚠️ 修复：应该使用语义生成后的图像（word_copncept_image）作为基础
+                # Feedback模式中的img_list也是通过second_generation得到的，已经包含了语义元素
+                # 应该将概念图像的元素融合到语义生成的图像上，而不是原始分割字体
                 
-                # 将概念图像的元素叠加到原始分割字体上
+                # 检查是否有语义选项，如果有则使用语义生成后的图像作为基础
+                if "semantic" in option_list:
+                    # 使用语义生成后的图像作为基础
+                    print(f"[INFO] 🎨 使用语义生成后的图像（已包含语义元素）作为融合基础 (Feedback)")
+                    base_img_rgba = bg_removal(word_copncept_image, current_path)
+                    img_r = self.add_alpha(base_img_rgba, word_copncept_image)
+                    img_r = add_bg_color(img_r, [255,255,255])
+                else:
+                    # 如果没有语义选项，使用原始分割字体作为基础
+                    print(f"[INFO] 🎨 使用原始分割字体作为融合基础 (Feedback)")
+                    img_word_rgba = bg_removal(img_word, current_path)
+                    img_r = self.add_alpha(img_word_rgba, img_word)
+                    img_r = add_bg_color(img_r, [255,255,255])
+                
+                # 将概念图像的元素叠加到基础图像上
                 concept_img_aligned = concept_img_masked_rgb
                 if concept_img_aligned.size != img_r.size:
                     concept_img_aligned = concept_img_aligned.resize(img_r.size, Image.Resampling.LANCZOS)
                 
-                # ⚠️ 关键：使用较低的alpha值（0.45），保持字体形状清晰
+                # ⚠️ 关键：使用较低的alpha值（0.45），让概念图像的元素与基础图像混合
+                # Image.blend(image1, image2, alpha) = (1-alpha) * image1 + alpha * image2
+                # 这里 image1 是基础图像（语义生成的图像或原始字体），image2 是概念图像
+                # alpha=0.45 意味着：55% 基础图像 + 45% 概念图像
                 img_blend = Image.blend(img_r, concept_img_aligned, alpha=0.45)
                 img_blend.save(f"check/color_generation/blend_input_feedback_{i}.png")
                 print(f"[INFO] 🎨 融合输入图像已保存 (Feedback): check/color_generation/blend_input_feedback_{i}.png")
-                print(f"[INFO] 🎨 概念图像元素已与原始分割字体混合，准备融合...")
+                if "semantic" in option_list:
+                    print(f"[INFO] 🎨 概念图像元素已与语义生成的图像混合，准备融合... (Feedback)")
+                else:
+                    print(f"[INFO] 🎨 概念图像元素已与原始分割字体混合，准备融合... (Feedback)")
                 
                 # ⚠️ 重要：使用较低的strength来保持字体形状清晰
                 # 对于Feedback模式，使用较低的strength_factor（0.60）来保持字体形状

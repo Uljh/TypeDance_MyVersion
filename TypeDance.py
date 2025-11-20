@@ -236,7 +236,31 @@ def image_view():
 
     os.makedirs("check", exist_ok=True)
     image = dataurl_to_pil(image_url, output_path=None).convert("RGB")
-    image.save("check/from_interface.png")
+    
+    # ⚠️ 重要：确保用户上传的图片能够覆盖 from_interface.png
+    from_interface_path = "check/from_interface.png"
+    try:
+        # 如果文件已存在，先检查并记录旧文件信息
+        if os.path.exists(from_interface_path):
+            old_size = os.path.getsize(from_interface_path)
+            print(f"[INFO] 📸 检测到已存在的 from_interface.png (大小: {old_size} 字节)，将被新上传的图片覆盖")
+        
+        # 保存新上传的图片（强制覆盖）
+        image.save(from_interface_path)
+        new_size = os.path.getsize(from_interface_path)
+        print(f"[INFO] ✅ 成功保存用户上传的图片: {from_interface_path} (大小: {new_size} 字节, 尺寸: {image.size})")
+        
+        # 验证保存是否成功
+        if os.path.exists(from_interface_path):
+            verify_image = Image.open(from_interface_path)
+            print(f"[INFO] ✅ 验证: 图片已成功保存并可以读取 (尺寸: {verify_image.size})")
+        else:
+            print(f"[WARN] ⚠️ 警告: 图片保存后文件不存在，可能存在权限问题")
+    except Exception as e:
+        print(f"[ERROR] ❌ 保存图片失败: {e}")
+        import traceback
+        traceback.print_exc()
+        # 即使保存失败，也继续执行（可能是权限问题）
 
     # ============ IMAGERY 模式 ============
     if mode == "image":
@@ -469,16 +493,37 @@ def image_extract():
     # 从check/from_interface.png（用户上传的图片）读取并保存为check/concept_image.png
     from_interface_path = "check/from_interface.png"
     concept_image_path = "check/concept_image.png"
+    
+    print(f"[INFO] 🎨 开始提取概念图像...")
+    print(f"[INFO] 🎨 源文件: {from_interface_path}")
+    print(f"[INFO] 🎨 目标文件: {concept_image_path}")
+    
     if os.path.exists(from_interface_path):
         try:
+            # 读取用户上传的图片
             original_concept_img = Image.open(from_interface_path).convert("RGB")
+            file_size = os.path.getsize(from_interface_path)
+            print(f"[INFO] 🎨 成功读取 from_interface.png (大小: {file_size} 字节, 尺寸: {original_concept_img.size})")
+            
+            # 保存为 concept_image.png（强制覆盖）
             original_concept_img.save(concept_image_path)
-            print(f"[INFO] 🎨 已保存用户上传的概念图像（彩色）: {concept_image_path}")
-            print(f"[INFO] 🎨 从 {from_interface_path} 读取并保存为 {concept_image_path}")
+            new_file_size = os.path.getsize(concept_image_path)
+            print(f"[INFO] ✅ 已保存用户上传的概念图像（彩色）: {concept_image_path} (大小: {new_file_size} 字节)")
+            print(f"[INFO] ✅ 从 {from_interface_path} 读取并保存为 {concept_image_path}")
+            
+            # 验证保存是否成功
+            if os.path.exists(concept_image_path):
+                verify_image = Image.open(concept_image_path)
+                print(f"[INFO] ✅ 验证: concept_image.png 已成功保存并可以读取 (尺寸: {verify_image.size})")
+            else:
+                print(f"[WARN] ⚠️ 警告: concept_image.png 保存后文件不存在，可能存在权限问题")
         except Exception as e:
-            print(f"[WARN] ⚠️ 无法保存概念图像: {e}")
+            print(f"[ERROR] ❌ 无法保存概念图像: {e}")
+            import traceback
+            traceback.print_exc()
     else:
-        print(f"[WARN] ⚠️ 用户上传的图片不存在: {from_interface_path}")
+        print(f"[ERROR] ❌ 用户上传的图片不存在: {from_interface_path}")
+        print(f"[WARN] ⚠️ 请确保在调用 /image_extract 之前，用户已通过 /image_segment 上传图片")
     
     image_r = Image.open("check/img_segment.png")
     img_contour = Image.open("check/img_segment_contour.png").convert("RGBA")
@@ -502,7 +547,22 @@ def image_extract():
     img_defalt_color.save("check/img_color.png")
 
     # ================= semantics =======================
-    image_add_bg = add_bg_color(img_mask, color=[255, 255, 255])
+    # ⚠️ 重要：使用概念图像（concept_image.png）进行语义提取，而不是黑白掩码
+    # 概念图像包含丰富的颜色和元素信息，能够提取更准确的语义描述
+    # 如果概念图像不存在，回退到使用 img_mask
+    concept_image_for_semantic_path = concept_image_path  # 使用之前保存的 concept_image.png
+    if os.path.exists(concept_image_for_semantic_path):
+        try:
+            concept_image_for_semantic = Image.open(concept_image_for_semantic_path).convert("RGB")
+            image_add_bg = add_bg_color(concept_image_for_semantic, color=[255, 255, 255])
+            print(f"[INFO] 🎨 使用概念图像进行语义提取: {concept_image_for_semantic_path}")
+        except Exception as e:
+            print(f"[WARN] ⚠️ 无法读取概念图像用于语义提取: {e}，使用 img_mask")
+            image_add_bg = add_bg_color(img_mask, color=[255, 255, 255])
+    else:
+        print(f"[WARN] ⚠️ 概念图像不存在，使用 img_mask 进行语义提取: {concept_image_for_semantic_path}")
+        image_add_bg = add_bg_color(img_mask, color=[255, 255, 255])
+    
     # 尝试用 CLIP-Interrogator 获取语义；若离线或无法下载权重，则降级为占位结果，保证接口不失败
     semantic_prompt = ""
     prompt = ""  # 初始化为空字符串，避免未定义错误
@@ -570,20 +630,40 @@ def image_extract():
             
             config = Config(clip_model_name="ViT-L-14/openai")
             print("[INFO] 🔄 正在初始化 CLIP Interrogator...")
-            image_extract._ci_cache = Interrogator(config)
-            print("[INFO] ✅ CLIP 模型加载成功")
+            try:
+                image_extract._ci_cache = Interrogator(config)
+                print("[INFO] ✅ CLIP 模型加载成功")
+            except Exception as init_error:
+                # 捕获初始化错误（可能是 sentence-transformers 下载失败）
+                error_msg_init = str(init_error)
+                if "sentence-transformers" in error_msg_init.lower() or "all-mpnet" in error_msg_init.lower() or "timeout" in error_msg_init.lower():
+                    print(f"[WARN] ⚠️  CLIP Interrogator 初始化时遇到 sentence-transformers 模型问题（可能无网络）")
+                    print(f"[WARN] ⚠️  错误: {error_msg_init[:200]}")
+                    print("[INFO] 💡 服务器无网络时，将在 /generate 路由中使用用户输入的提示词作为语义描述")
+                    print("[INFO] 💡 这是正常情况，不影响功能使用")
+                    # 不设置缓存，让下次重试
+                    image_extract._ci_cache = None
+                    raise  # 重新抛出异常，让外层异常处理逻辑处理
+                else:
+                    # 其他类型的初始化错误，直接抛出
+                    raise
         else:
             print("[INFO] ♻️  使用已缓存的 CLIP 模型")
         
-        ci = image_extract._ci_cache
-        print("[INFO] 🎨 正在生成语义描述...")
-        prompt = ci.interrogate_fast(image_add_bg)
-        print(f"[INFO] 📝 CLIP Interrogator prompt: {prompt}")
-        semantic_prompt = prompt
-        # obtain the keyword
-        sentance = prompt.split(",")[0]
-        keyword = extract_keyword(sentance)
-        img_defalt_semantic = add_text_to_img(keyword)
+        # 只有在成功初始化后才执行语义提取
+        if image_extract._ci_cache is not None:
+            ci = image_extract._ci_cache
+            print("[INFO] 🎨 正在生成语义描述...")
+            prompt = ci.interrogate_fast(image_add_bg)
+            print(f"[INFO] 📝 CLIP Interrogator prompt: {prompt}")
+            semantic_prompt = prompt
+            # obtain the keyword
+            sentance = prompt.split(",")[0]
+            keyword = extract_keyword(sentance)
+            img_defalt_semantic = add_text_to_img(keyword)
+        else:
+            # 如果没有缓存（初始化失败），设置默认值
+            raise Exception("CLIP Interrogator 未初始化")
     except (FileNotFoundError, ConnectionError, TimeoutError, OSError) as e:
         # 清除失败的缓存，以便下次重试
         image_extract._ci_cache = None
@@ -710,6 +790,14 @@ def image_generate():
     strength = float(data["strength"])
     semantic_prompt = data["semantic_prompt"]
     bool_list = data["generate-option"]
+    
+    # ⚠️ 重要：如果语义提取失败（服务器无网络），使用用户输入的提示词作为回退
+    if semantic_prompt == "semantic description unavailable" or not semantic_prompt or semantic_prompt.strip() == "":
+        print(f"[INFO] ⚠️  语义提取失败或未提供，使用用户输入的提示词作为语义描述")
+        print(f"[INFO] 💡 用户提示词: {prompt}")
+        # 将用户输入的提示词作为语义描述
+        semantic_prompt = prompt
+        print(f"[INFO] ✅ 已使用用户提示词作为语义描述: {semantic_prompt}")
     # previous_mode = data["previous_mode"]
     # previous_img = data["previous_img"]
     FEEDBACK_FLAG = False
