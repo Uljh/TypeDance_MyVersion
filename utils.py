@@ -256,6 +256,32 @@ def img_to_svg_api(img_path, output_path, callback_base_url=None):
                                     file_size = os.path.getsize(output_path)
                                     print(f"✅ SVG 文件已保存到: {output_path} ({file_size} 字节)")
                                     
+                                    # === 备份 SVG 到 svg_folder ===
+                                    try:
+                                        svg_backup_folder = "/root/autodl-tmp/TypeDance/check/svg_folder"
+                                        os.makedirs(svg_backup_folder, exist_ok=True)
+                                        
+                                        # 根据输出路径判断备份文件名
+                                        output_filename = os.path.basename(output_path)
+                                        if "word_dynamic" in output_filename:
+                                            # 剩余部分：word_dynamic.svg -> remaining_word.svg
+                                            backup_filename = "remaining_word.svg"
+                                        elif "img_word" in output_filename:
+                                            # 切割部分：img_word.svg -> img_word.svg
+                                            backup_filename = "img_word.svg"
+                                        else:
+                                            # 其他情况：使用原文件名
+                                            backup_filename = output_filename
+                                        
+                                        backup_path = os.path.join(svg_backup_folder, backup_filename)
+                                        import shutil
+                                        shutil.copy2(output_path, backup_path)
+                                        print(f"✅ [SVG] 已备份到 svg_folder: {backup_path} ({file_size} 字节)")
+                                    except Exception as backup_error:
+                                        print(f"⚠️ [SVG] 备份到 svg_folder 失败: {backup_error}")
+                                        import traceback
+                                        traceback.print_exc()
+                                    
                                     # 清理任务信息
                                     with _svg_conversion_lock:
                                         _svg_conversion_tasks.pop(task_id, None)
@@ -341,21 +367,30 @@ def handle_svg_callback(callback_data):
     返回:
         bool: 是否处理成功
     """
+    print(f"[SVG] handle_svg_callback 被调用，回调数据: {callback_data}")
     _init_svg_tasks_lock()
     
     try:
         code = callback_data.get("code")
         task_id = callback_data.get("taskId")
         
+        print(f"[SVG] 回调处理 - code: {code}, taskId: {task_id}")
+        
         if not task_id:
             print(f"[SVG] 回调数据中缺少 taskId: {callback_data}")
             return False
         
+        # 在获取锁之前，先打印当前任务列表
         with _svg_conversion_lock:
+            print(f"[SVG] 当前任务列表: {list(_svg_conversion_tasks.keys())}")
             task_info = _svg_conversion_tasks.get(task_id)
             if not task_info:
-                print(f"[SVG] 未找到任务 ID: {task_id}")
+                print(f"[SVG] ❌ 未找到任务 ID: {task_id}")
+                print(f"[SVG] ❌ 当前任务列表: {list(_svg_conversion_tasks.keys())}")
+                print(f"[SVG] ❌ 这可能是因为任务已超时或被清理")
                 return False
+            
+            print(f"[SVG] ✅ 找到任务 ID: {task_id}, 输出路径: {task_info.get('output_path')}")
             
             if code == "success":
                 # 转换成功
@@ -363,8 +398,73 @@ def handle_svg_callback(callback_data):
                 if imgurl:
                     task_info["status"] = "completed"
                     task_info["result_url"] = imgurl
+                    output_path = task_info.get("output_path")
                     print(f"[SVG] 任务 {task_id} 转换成功，结果 URL: {imgurl}")
-                    return True
+                    print(f"[SVG] 输出路径: {output_path}")
+                    
+                    # ⚠️ 关键修复：立即下载文件，不依赖等待线程
+                    # 这样可以确保即使原始等待线程已经退出，文件也能被下载
+                    if output_path:
+                        try:
+                            import requests
+                            import urllib3
+                            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                            
+                            print(f"[SVG] 回调处理：正在下载 SVG 文件...")
+                            svg_response = requests.get(imgurl, timeout=60, verify=False)
+                            if svg_response.status_code == 200:
+                                # 确保输出目录存在
+                                output_dir = os.path.dirname(output_path)
+                                if output_dir:
+                                    os.makedirs(output_dir, exist_ok=True)
+                                
+                                with open(output_path, "wb") as f:
+                                    f.write(svg_response.content)
+                                file_size = os.path.getsize(output_path)
+                                print(f"✅ [SVG] 回调处理：SVG 文件已保存到: {output_path} ({file_size} 字节)")
+                                
+                                # === 备份 SVG 到 svg_folder ===
+                                try:
+                                    svg_backup_folder = "/root/autodl-tmp/TypeDance/check/svg_folder"
+                                    os.makedirs(svg_backup_folder, exist_ok=True)
+                                    
+                                    # 根据输出路径判断备份文件名
+                                    output_filename = os.path.basename(output_path)
+                                    if "word_dynamic" in output_filename:
+                                        # 剩余部分：word_dynamic.svg -> remaining_word.svg
+                                        backup_filename = "remaining_word.svg"
+                                    elif "img_word" in output_filename:
+                                        # 切割部分：img_word.svg -> img_word.svg
+                                        backup_filename = "img_word.svg"
+                                    else:
+                                        # 其他情况：使用原文件名
+                                        backup_filename = output_filename
+                                    
+                                    backup_path = os.path.join(svg_backup_folder, backup_filename)
+                                    import shutil
+                                    shutil.copy2(output_path, backup_path)
+                                    print(f"✅ [SVG] 回调处理：已备份到 svg_folder: {backup_path} ({file_size} 字节)")
+                                except Exception as backup_error:
+                                    print(f"⚠️ [SVG] 回调处理：备份到 svg_folder 失败: {backup_error}")
+                                    import traceback
+                                    traceback.print_exc()
+                                
+                                return True
+                            else:
+                                print(f"❌ [SVG] 回调处理：下载 SVG 文件失败 [{svg_response.status_code}]: {svg_response.text}")
+                                task_info["status"] = "failed"
+                                task_info["error"] = f"下载失败: {svg_response.status_code}"
+                                return False
+                        except Exception as download_error:
+                            print(f"❌ [SVG] 回调处理：下载 SVG 文件时出现错误: {download_error}")
+                            import traceback
+                            traceback.print_exc()
+                            task_info["status"] = "failed"
+                            task_info["error"] = str(download_error)
+                            return False
+                    else:
+                        print(f"⚠️ [SVG] 回调处理：任务信息中缺少 output_path")
+                        return True  # 仍然返回成功，因为回调本身是成功的
                 else:
                     print(f"[SVG] 回调数据中缺少 imgurl: {callback_data}")
                     task_info["status"] = "failed"
@@ -774,14 +874,36 @@ def crop_element_from_RGBA(image, mask_single_FLAG= True):
 
 def add_bg_color(img_rgba, color=[247, 246, 240]):
     image_array = np.array(img_rgba)
-    alpha = image_array[:, :, 3]
+    
+    # ⚠️ 修复：兼容 RGB 和 RGBA 格式
+    # 检查图像通道数，如果是 RGB（3通道），添加完全不透明的 alpha 通道
+    if len(image_array.shape) == 3 and image_array.shape[2] == 3:
+        # RGB 格式：添加完全不透明的 alpha 通道（255表示完全不透明）
+        alpha = np.ones((image_array.shape[0], image_array.shape[1]), dtype=image_array.dtype) * 255
+        # 提取 RGB 通道
+        image_rgb = image_array[:, :, :3]
+    elif len(image_array.shape) == 3 and image_array.shape[2] == 4:
+        # RGBA 格式：使用现有的 alpha 通道
+        alpha = image_array[:, :, 3]
+        # 提取 RGB 通道
+        image_rgb = image_array[:, :, :3]
+    else:
+        # 意外的格式，尝试直接使用
+        print(f"[WARN] ⚠️  add_bg_color: 意外的图像格式，shape: {image_array.shape}")
+        alpha = np.ones((image_array.shape[0], image_array.shape[1]), dtype=image_array.dtype) * 255
+        if image_array.shape[2] >= 3:
+            image_rgb = image_array[:, :, :3]
+        else:
+            image_rgb = image_array
+    
     # white_array = np.ones_like(image_array) * color
-    color_array = np.full_like(image_array[:, :, :3], color)
-
-    image_array = np.where(np.expand_dims(alpha, axis=2) == 0, color_array, image_array[:, :, :3])
+    color_array = np.full_like(image_rgb, color)
+    
+    # 将 alpha 通道为 0 的区域（透明区域）填充为指定颜色
+    image_array_result = np.where(np.expand_dims(alpha, axis=2) == 0, color_array, image_rgb)
 
     # 打印处理后的数组
-    image_rgb_r = Image.fromarray(image_array).convert("RGB")
+    image_rgb_r = Image.fromarray(image_array_result.astype(np.uint8)).convert("RGB")
     return image_rgb_r
 
 def add_margin(background, img):
@@ -908,14 +1030,64 @@ def extract_color_palatte(image_test):
 
 
 def extract_keyword(prompt):
-    kw_model = KeyBERT(model='all-mpnet-base-v2')
-    keywords = kw_model.extract_keywords(prompt,
-                                        keyphrase_ngram_range=(1,1),
-                                        stop_words='english',
-                                        highlight=False,
-                                        top_n=3)
-    keywords_list = list(dict(keywords).keys())
-    return keywords_list[0]
+    """
+    从提示词中提取关键词。
+    如果 KeyBERT 模型无法加载（无网络），则使用简单的回退方案。
+    """
+    try:
+        kw_model = KeyBERT(model='all-mpnet-base-v2')
+        keywords = kw_model.extract_keywords(prompt,
+                                            keyphrase_ngram_range=(1,1),
+                                            stop_words='english',
+                                            highlight=False,
+                                            top_n=3)
+        keywords_list = list(dict(keywords).keys())
+        if keywords_list:
+            return keywords_list[0]
+        else:
+            # 如果没有提取到关键词，使用回退方案
+            return _extract_keyword_fallback(prompt)
+    except (ConnectionError, TimeoutError, OSError, Exception) as e:
+        error_msg = str(e)
+        # 检查是否是 sentence-transformers 或网络相关的错误
+        if "sentence-transformers" in error_msg.lower() or "all-mpnet" in error_msg.lower() or "timeout" in error_msg.lower() or "connection" in error_msg.lower():
+            print(f"[INFO] ℹ️  KeyBERT 模型无法加载（可能无网络），使用简单回退方案提取关键词")
+            return _extract_keyword_fallback(prompt)
+        else:
+            # 其他错误，也使用回退方案
+            print(f"[WARN] ⚠️  KeyBERT 提取关键词失败: {error_msg[:100]}，使用简单回退方案")
+            return _extract_keyword_fallback(prompt)
+
+
+def _extract_keyword_fallback(prompt):
+    """
+    简单的关键词提取回退方案：从提示词中提取第一个有意义的词。
+    """
+    if not prompt or not prompt.strip():
+        return "Semantic"
+    
+    # 移除常见的标点符号，分割成单词
+    import re
+    words = re.findall(r'\b[a-zA-Z]+\b', prompt.strip())
+    
+    # 过滤掉常见的停用词
+    stop_words = {'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+                  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+                  'should', 'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those',
+                  'on', 'in', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'as', 'and', 'or'}
+    
+    # 找到第一个不是停用词的单词
+    for word in words:
+        word_lower = word.lower()
+        if word_lower not in stop_words and len(word) > 2:
+            return word
+    
+    # 如果所有词都是停用词，返回第一个词（大写开头）
+    if words:
+        return words[0].capitalize()
+    
+    # 如果完全没有单词，返回默认值
+    return "Semantic"
 
 def add_text_to_img(keyword):
     # 加载字体和图像

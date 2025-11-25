@@ -150,7 +150,7 @@ else:
 app = Flask(__name__)
 # 配置 CORS，允许来自前端的跨域请求
 # 注意：虽然前端不再发送 Cache-Control 和 Pragma 头，但为了兼容性仍然允许它们
-CORS(app,
+CORS(app, 
      resources={r'/*': {
          'origins': ['http://localhost:3000', 'http://127.0.0.1:3000'],
          'methods': ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
@@ -237,58 +237,104 @@ def image_view():
     os.makedirs("check", exist_ok=True)
     image = dataurl_to_pil(image_url, output_path=None).convert("RGB")
     
-    # ⚠️ 重要：确保用户上传的图片能够覆盖 from_interface.png
+    # ⚠️ 重要：智能判断是否为概念图片
+    # 1. mode='image' 明确表示概念图片
+    # 2. 如果 mode 不是 'word'，且图片尺寸较大（> 600x400），也认为是概念图片
+    # 3. 如果 mode 不是 'word' 且不是 'image'，但图片尺寸较大，也认为是概念图片（用户可能跳过了字体切割）
+    # 这样即使用户跳过字体切割步骤，也能正确保存概念图片
     from_interface_path = "check/from_interface.png"
-    try:
-        # 如果文件已存在，先检查并记录旧文件信息
-        if os.path.exists(from_interface_path):
-            old_size = os.path.getsize(from_interface_path)
-            print(f"[INFO] 📸 检测到已存在的 from_interface.png (大小: {old_size} 字节)，将被新上传的图片覆盖")
-        
-        # 保存新上传的图片（强制覆盖）
-        image.save(from_interface_path)
-        new_size = os.path.getsize(from_interface_path)
-        print(f"[INFO] ✅ 成功保存用户上传的图片: {from_interface_path} (大小: {new_size} 字节, 尺寸: {image.size})")
-        
-        # 验证保存是否成功
-        if os.path.exists(from_interface_path):
-            verify_image = Image.open(from_interface_path)
-            print(f"[INFO] ✅ 验证: 图片已成功保存并可以读取 (尺寸: {verify_image.size})")
+    img_size = image.size
+    is_large_image = img_size[0] > 600 or img_size[1] > 400  # 概念图片通常是较大的图片
+    # ⚠️ 改进：放宽判断条件，只要不是 word 模式且图片较大，就认为是概念图片
+    # 这样即使用户跳过字体切割步骤，也能正确保存概念图片
+    # ⚠️ 改进：放宽判断条件，只要不是 word 模式，就认为是概念图片
+    # 这样即使用户跳过字体切割步骤、mode 不对或图片尺寸小，也能正确保存概念图片
+    # 但要注意：如果 mode 是 "word"，则明确是字体图片，不保存到 from_interface.png
+    is_concept_image = mode == "image" or (mode != "word")
+
+    # ============ 概念图片保存逻辑 ============
+    if is_concept_image:
+        # 这是概念图片（小鸟等），保存到 from_interface.png（强制覆盖）
+        if mode == "image":
+            print(f"[INFO] 📸 [概念图片] mode='image'，这是概念图片上传")
         else:
-            print(f"[WARN] ⚠️ 警告: 图片保存后文件不存在，可能存在权限问题")
-    except Exception as e:
-        print(f"[ERROR] ❌ 保存图片失败: {e}")
-        import traceback
-        traceback.print_exc()
-        # 即使保存失败，也继续执行（可能是权限问题）
+            print(f"[INFO] 📸 [概念图片] mode='{mode}'，自动识别为概念图片（非 word 模式）")
+            if not is_large_image:
+                print(f"[INFO] ⚠️ [概念图片] 注意：图片尺寸较小 ({img_size})，如果是字体图片请使用 mode='word'")
+        print(f"[INFO] 📸 [概念图片] 图片尺寸: {img_size}, 文件大小: {len(image.tobytes())} 字节")
+        try:
+            # 如果文件已存在，先检查并记录旧文件信息
+            if os.path.exists(from_interface_path):
+                old_size = os.path.getsize(from_interface_path)
+                old_img = Image.open(from_interface_path)
+                old_size_tuple = old_img.size
+                print(f"[INFO] 📸 [概念图片] 检测到已存在的 from_interface.png (大小: {old_size} 字节, 尺寸: {old_size_tuple})")
+                print(f"[INFO] 📸 [概念图片] 将被新上传的概念图片覆盖 (新尺寸: {image.size})")
+            
+            # ⚠️ 关键：保存新上传的概念图片（强制覆盖）
+            # 这确保每次上传概念图片时，都会覆盖 from_interface.png
+            image.save(from_interface_path)
+            new_size = os.path.getsize(from_interface_path)
+            print(f"[INFO] ✅ [概念图片] 成功保存用户上传的概念图片到 from_interface.png (大小: {new_size} 字节, 尺寸: {image.size})")
+            
+            # 验证保存是否成功
+            if os.path.exists(from_interface_path):
+                verify_image = Image.open(from_interface_path)
+                verify_size = verify_image.size
+                if verify_size == image.size:
+                    print(f"[INFO] ✅ [概念图片] 验证: from_interface.png 已成功更新为概念图片 (尺寸: {verify_size})")
+                else:
+                    print(f"[WARN] ⚠️ [概念图片] 验证失败: 保存后的尺寸 {verify_size} 与原始尺寸 {image.size} 不匹配")
+            else:
+                print(f"[WARN] ⚠️ [概念图片] 警告: 概念图片保存后文件不存在，可能存在权限问题")
+        except Exception as e:
+            print(f"[ERROR] ❌ [概念图片] 保存概念图片失败: {e}")
+            import traceback
+            traceback.print_exc()
+            # 即使保存失败，也继续执行（可能是权限问题）
+        
+        # 继续处理概念图片的分割（仅当 mode == "image" 时，因为需要 points 参数）
+        if mode == "image" and "points" in data:
+            input_points = np.array(data["points"]) * (image.size[1] / 180)
+            image_np = np.array(image)
+            image_np = cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB)
+            mask = get_img_embedding(image_np, input_points, mode)
+            img_mask = mask_to_image(mask, image_np)
+            img_mask.save("check/img_mask.png")
 
-    # ============ IMAGERY 模式 ============
-    if mode == "image":
-        input_points = np.array(data["points"]) * (image.size[1] / 180)
-        image = np.array(image)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        mask = get_img_embedding(image, input_points, mode)
-        img_mask = mask_to_image(mask, image)
-        img_mask.save("check/img_mask.png")
+            image_r, contours_g = highlight_mask(mask, image_np, mode)
+            image_r.save("check/img_segment.png")
 
-        image_r, contours_g = highlight_mask(mask, image, mode)
-        image_r.save("check/img_segment.png")
+            blank_rgba = Image.new("RGBA", image_r.size, (0, 0, 0, 0))
+            blank_rgba_arr = np.array(blank_rgba)
+            max_contour = find_max_contour(contours_g)
+            cv2.drawContours(blank_rgba_arr, max_contour, -1, (79, 79, 79, 255), thickness=8)
+            img_contour = Image.fromarray(blank_rgba_arr).convert("RGBA")
+            img_contour = crop_element_from_RGBA(img_contour, mask_single_FLAG=False)
+            img_contour.save("check/img_segment_contour.png")
 
-        blank_rgba = Image.new("RGBA", image_r.size, (0, 0, 0, 0))
-        blank_rgba_arr = np.array(blank_rgba)
-        max_contour = find_max_contour(contours_g)
-        cv2.drawContours(blank_rgba_arr, max_contour, -1, (79, 79, 79, 255), thickness=8)
-        img_contour = Image.fromarray(blank_rgba_arr).convert("RGBA")
-        img_contour = crop_element_from_RGBA(img_contour, mask_single_FLAG=False)
-        img_contour.save("check/img_segment_contour.png")
+            # 统一返回 JSON 格式，与 word 模式保持一致
+            return jsonify({
+                "highlight": pil_to_data_uri(image_r)
+            })
+        else:
+            # 如果 mode 不是 "image"（但被识别为概念图片），只保存图片，不进行分割处理
+            print(f"[INFO] 📸 [概念图片] mode='{mode}'，跳过分割处理，只保存概念图片到 from_interface.png")
+            return jsonify({
+                "status": "success",
+                "message": "概念图片已保存到 from_interface.png"
+            })
 
-        # 统一返回 JSON 格式，与 word 模式保持一致
-        return jsonify({
-            "highlight": pil_to_data_uri(image_r)
-        })
-
-    # ============ TYPEFACE 模式 ============
+    # ============ TYPEFACE 模式（字体图片）============
     if mode == "word":
+        # word 模式：用户上传的是字体图片，不保存到 from_interface.png（避免覆盖概念图片）
+        print(f"[INFO] 📸 [字体图片] mode='word'，这是字体图片上传")
+        print(f"[INFO] 📸 [字体图片] 不保存到 from_interface.png，避免覆盖概念图片")
+        if os.path.exists(from_interface_path):
+            concept_size = os.path.getsize(from_interface_path)
+            print(f"[INFO] 📸 [字体图片] from_interface.png 保持不变（当前大小: {concept_size} 字节），继续保存概念图片")
+        else:
+            print(f"[INFO] 📸 [字体图片] from_interface.png 不存在（正常，可能还未上传概念图片）")
         input_boxes = data["box"]
         print("🟦 input_boxes:", input_boxes)
         
@@ -349,6 +395,18 @@ def image_view():
                     print(f"🔄 [SVG] 开始异步 SVG 转换 (multi-selection)...")
                     img_to_svg_api("check/remaining_word.png", svg_path)
                     print(f"✅ [SVG] 异步 SVG 转换完成 (multi-selection): {svg_path}")
+                    
+                    # === 备份 SVG 到 svg_folder ===
+                    svg_backup_folder = "/root/autodl-tmp/TypeDance/check/svg_folder"
+                    os.makedirs(svg_backup_folder, exist_ok=True)
+                    
+                    # 备份剩余部分的 SVG
+                    if os.path.exists(svg_path):
+                        import shutil
+                        backup_remaining_path = os.path.join(svg_backup_folder, "remaining_word.svg")
+                        shutil.copy2(svg_path, backup_remaining_path)
+                        print(f"✅ [SVG] 已备份剩余部分 SVG 到: {backup_remaining_path}")
+
                 except Exception as e:
                     print(f"❌ [SVG] 异步 SVG 转换失败 (multi-selection): {e}")
                     import traceback
@@ -430,6 +488,25 @@ def image_view():
                     print(f"🔄 [SVG] 开始异步 SVG 转换...")
                     img_to_svg_api("check/remaining_word.png", svg_path)
                     print(f"✅ [SVG] 异步 SVG 转换完成: {svg_path}")
+                    
+                    # === 备份 SVG 到 svg_folder ===
+                    svg_backup_folder = "/root/autodl-tmp/TypeDance/check/svg_folder"
+                    os.makedirs(svg_backup_folder, exist_ok=True)
+                    
+                    # 备份剩余部分的 SVG
+                    if os.path.exists(svg_path):
+                        import shutil
+                        backup_remaining_path = os.path.join(svg_backup_folder, "remaining_word.svg")
+                        shutil.copy2(svg_path, backup_remaining_path)
+                        print(f"✅ [SVG] 已备份剩余部分 SVG 到: {backup_remaining_path}")
+                    
+                    # 转换切割部分（img_word）为 SVG 并保存到备份文件夹
+                    try:
+                        backup_word_path = os.path.join(svg_backup_folder, "img_word.svg")
+                        img_to_svg_api("check/img_word.png", backup_word_path)
+                        print(f"✅ [SVG] 已转换切割部分 SVG 到: {backup_word_path}")
+                    except Exception as e:
+                        print(f"⚠️ [SVG] 转换切割部分 SVG 失败: {e}")
                 except Exception as e:
                     print(f"❌ [SVG] 异步 SVG 转换失败: {e}")
                     import traceback
@@ -487,43 +564,185 @@ def image_view():
 
 
 
+@app.route('/upload_concept_image', methods=['GET', 'POST'])
+def upload_concept_image():
+    """
+    专门用于上传概念图片的接口
+    将用户上传的概念图片保存到 from_interface.png，供后续处理使用
+    """
+    data = request.get_json()
+    
+    if not data or "image_url" not in data:
+        return jsonify({
+            "status": "error",
+            "message": "缺少 image_url 参数"
+        }), 400
+    
+    image_url = data["image_url"]
+    from_interface_path = "check/from_interface.png"
+    concept_image_path = "check/concept_image.png"
+    
+    os.makedirs("check", exist_ok=True)
+    
+    try:
+        # 读取上传的图片
+        image = dataurl_to_pil(image_url, output_path=None).convert("RGB")
+        img_size = image.size
+        file_size = len(image.tobytes())
+        
+        print("=" * 80)
+        print(f"[INFO] 📸 [概念图片上传] 接收到概念图片上传请求")
+        print(f"[INFO] 📸 [概念图片上传] 图片尺寸: {img_size}, 文件大小: {file_size} 字节")
+        
+        # 如果文件已存在，先检查并记录旧文件信息
+        if os.path.exists(from_interface_path):
+            old_size = os.path.getsize(from_interface_path)
+            old_img = Image.open(from_interface_path)
+            old_size_tuple = old_img.size
+            print(f"[INFO] 📸 [概念图片上传] 检测到已存在的 from_interface.png (大小: {old_size} 字节, 尺寸: {old_size_tuple})")
+            print(f"[INFO] 📸 [概念图片上传] 将被新上传的概念图片覆盖 (新尺寸: {img_size})")
+        
+        # ⚠️ 关键：保存新上传的概念图片（强制覆盖）
+        image.save(from_interface_path)
+        new_size = os.path.getsize(from_interface_path)
+        print(f"[INFO] ✅ [概念图片上传] 成功保存概念图片到 from_interface.png (大小: {new_size} 字节, 尺寸: {img_size})")
+        
+        # 同时保存到 concept_image.png
+        image.save(concept_image_path)
+        concept_size = os.path.getsize(concept_image_path)
+        print(f"[INFO] ✅ [概念图片上传] 成功保存概念图片到 concept_image.png (大小: {concept_size} 字节)")
+        
+        # 验证保存是否成功
+        if os.path.exists(from_interface_path):
+            verify_image = Image.open(from_interface_path)
+            verify_size = verify_image.size
+            if verify_size == image.size:
+                print(f"[INFO] ✅ [概念图片上传] 验证: from_interface.png 已成功更新为概念图片 (尺寸: {verify_size})")
+            else:
+                print(f"[WARN] ⚠️ [概念图片上传] 验证失败: 保存后的尺寸 {verify_size} 与原始尺寸 {image.size} 不匹配")
+        else:
+            print(f"[WARN] ⚠️ [概念图片上传] 警告: 概念图片保存后文件不存在，可能存在权限问题")
+        
+        print("=" * 80)
+        
+        return jsonify({
+            "status": "success",
+            "message": "概念图片已成功保存",
+            "from_interface_path": from_interface_path,
+            "concept_image_path": concept_image_path,
+            "size": img_size
+        })
+        
+    except Exception as e:
+        print(f"[ERROR] ❌ [概念图片上传] 保存概念图片失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "status": "error",
+            "message": f"保存概念图片失败: {str(e)}"
+        }), 500
+
+
 @app.route('/image_extract',methods=['GET', 'POST'])
 def image_extract():
     # ⚠️ 重要：保存用户上传的概念图像（彩色）为concept_image.png，供generate.py使用
-    # 从check/from_interface.png（用户上传的图片）读取并保存为check/concept_image.png
+    # 优先从请求中接收图片数据，如果没有则从check/from_interface.png读取
     from_interface_path = "check/from_interface.png"
     concept_image_path = "check/concept_image.png"
     
     print(f"[INFO] 🎨 开始提取概念图像...")
-    print(f"[INFO] 🎨 源文件: {from_interface_path}")
-    print(f"[INFO] 🎨 目标文件: {concept_image_path}")
     
-    if os.path.exists(from_interface_path):
+    # ⚠️ 优先：尝试从请求中接收概念图片数据（如果前端发送了）
+    original_concept_img = None
+    data = request.get_json(silent=True) if request.is_json else {}
+    
+    print(f"[INFO] 🎨 检查请求中是否包含概念图片数据...")
+    if data and "image_url" in data:
+        # 从请求中接收图片数据
         try:
-            # 读取用户上传的图片
-            original_concept_img = Image.open(from_interface_path).convert("RGB")
-            file_size = os.path.getsize(from_interface_path)
-            print(f"[INFO] 🎨 成功读取 from_interface.png (大小: {file_size} 字节, 尺寸: {original_concept_img.size})")
+            image_url = data["image_url"]
+            original_concept_img = dataurl_to_pil(image_url, output_path=None).convert("RGB")
+            img_size = original_concept_img.size
+            print(f"[INFO] 🎨 从请求中接收到概念图片 (尺寸: {img_size})")
             
-            # 保存为 concept_image.png（强制覆盖）
+            # 直接保存到 from_interface.png 和 concept_image.png
+            original_concept_img.save(from_interface_path)
             original_concept_img.save(concept_image_path)
-            new_file_size = os.path.getsize(concept_image_path)
-            print(f"[INFO] ✅ 已保存用户上传的概念图像（彩色）: {concept_image_path} (大小: {new_file_size} 字节)")
-            print(f"[INFO] ✅ 从 {from_interface_path} 读取并保存为 {concept_image_path}")
-            
-            # 验证保存是否成功
-            if os.path.exists(concept_image_path):
-                verify_image = Image.open(concept_image_path)
-                print(f"[INFO] ✅ 验证: concept_image.png 已成功保存并可以读取 (尺寸: {verify_image.size})")
-            else:
-                print(f"[WARN] ⚠️ 警告: concept_image.png 保存后文件不存在，可能存在权限问题")
+            print(f"[INFO] ✅ 已保存概念图片到 from_interface.png 和 concept_image.png")
         except Exception as e:
-            print(f"[ERROR] ❌ 无法保存概念图像: {e}")
-            import traceback
-            traceback.print_exc()
-    else:
-        print(f"[ERROR] ❌ 用户上传的图片不存在: {from_interface_path}")
-        print(f"[WARN] ⚠️ 请确保在调用 /image_extract 之前，用户已通过 /image_segment 上传图片")
+            print(f"[WARN] ⚠️ 无法从请求中读取图片数据: {e}")
+            original_concept_img = None
+    
+    # 如果没有从请求中获取到图片，尝试从文件读取
+    if original_concept_img is None:
+        print(f"[INFO] 🎨 尝试从文件读取: {from_interface_path}")
+        print(f"[INFO] 🎨 目标文件: {concept_image_path}")
+        
+        if os.path.exists(from_interface_path):
+            try:
+                # 读取用户上传的图片
+                original_concept_img = Image.open(from_interface_path).convert("RGB")
+                file_size = os.path.getsize(from_interface_path)
+                img_size = original_concept_img.size
+                print(f"[INFO] 🎨 成功读取 from_interface.png (大小: {file_size} 字节, 尺寸: {img_size})")
+                
+                # ⚠️ 重要：检查 from_interface.png 是否是字体图片
+                # 字体图片通常是特定尺寸（如 (464, 300)），而概念图片通常是更大的图片
+                # 如果尺寸看起来像字体图片，不保存为 concept_image.png，并给出错误提示
+                is_font_image = img_size[0] < 600 and img_size[1] < 400
+                
+                if is_font_image:
+                    print("=" * 80)
+                    print(f"[ERROR] ❌ from_interface.png 的尺寸 ({img_size}) 看起来像是字体图片而不是概念图片")
+                    print(f"[ERROR] ❌ 无法继续处理，因为概念图片不存在")
+                    print(f"[ERROR] ❌")
+                    print(f"[ERROR] ❌ 可能的原因:")
+                    print(f"[ERROR] ❌   1. 概念图片从未上传")
+                    print(f"[ERROR] ❌   2. 字体图片在概念图片上传后覆盖了 from_interface.png")
+                    print(f"[ERROR] ❌   3. 概念图片上传时 mode 不是 'image'")
+                    print(f"[ERROR] ❌")
+                    print(f"[ERROR] ❌ ⚠️ 重要：请先上传概念图片！")
+                    print(f"[ERROR] ❌")
+                    print(f"[ERROR] ❌ 解决方案（推荐）：")
+                    print(f"[ERROR] ❌   1. 调用 /upload_concept_image 接口上传概念图片")
+                    print(f"[ERROR] ❌      POST /upload_concept_image")
+                    print(f"[ERROR] ❌      {{ \"image_url\": \"data:image/png;base64,...\" }}")
+                    print(f"[ERROR] ❌")
+                    print(f"[ERROR] ❌ 或者：")
+                    print(f"[ERROR] ❌   2. 在 /image_extract 请求中附带概念图片数据（image_url）")
+                    print(f"[ERROR] ❌   3. 或通过 /image_segment 上传概念图片（mode='image'）")
+                    print("=" * 80)
+                    # 不保存为 concept_image.png，保持原有错误状态
+                    original_concept_img = None
+                else:
+                    # 保存为 concept_image.png（强制覆盖）
+                    original_concept_img.save(concept_image_path)
+                    new_file_size = os.path.getsize(concept_image_path)
+                    print(f"[INFO] ✅ 已保存用户上传的概念图像（彩色）: {concept_image_path} (大小: {new_file_size} 字节)")
+                    print(f"[INFO] ✅ 从 {from_interface_path} 读取并保存为 {concept_image_path}")
+                
+                # 验证保存是否成功（只有在保存成功的情况下才验证）
+                if original_concept_img is not None and os.path.exists(concept_image_path):
+                    verify_image = Image.open(concept_image_path)
+                    print(f"[INFO] ✅ 验证: concept_image.png 已成功保存并可以读取 (尺寸: {verify_image.size})")
+                elif original_concept_img is None:
+                    print(f"[ERROR] ❌ 概念图片验证失败: 检测到 from_interface.png 是字体图片，未保存为 concept_image.png")
+                else:
+                    print(f"[WARN] ⚠️ 警告: concept_image.png 保存后文件不存在，可能存在权限问题")
+            except Exception as e:
+                print(f"[ERROR] ❌ 无法保存概念图像: {e}")
+                import traceback
+                traceback.print_exc()
+                original_concept_img = None
+        else:
+            print(f"[ERROR] ❌ 用户上传的图片不存在: {from_interface_path}")
+            print(f"[WARN] ⚠️ 请确保在调用 /image_extract 之前，用户已通过 /image_segment 上传概念图片（mode='image'）")
+            print(f"[WARN] ⚠️ 或者在 /image_extract 请求中附带概念图片数据（image_url）")
+    
+    # 验证最终是否有有效的概念图片
+    if original_concept_img is None:
+        print(f"[ERROR] ❌ 无法获取概念图片，无法继续处理")
+        # 如果 concept_image.png 不存在，后续代码会报错，但至少我们已经给出了明确的错误信息
     
     image_r = Image.open("check/img_segment.png")
     img_contour = Image.open("check/img_segment_contour.png").convert("RGBA")
@@ -628,25 +847,25 @@ def image_extract():
             except Exception as e:
                 print(f"[INFO] ⚠️  无法设置 huggingface_hub 缓存目录: {e}")
             
-            config = Config(clip_model_name="ViT-L-14/openai")
-            print("[INFO] 🔄 正在初始化 CLIP Interrogator...")
-            try:
-                image_extract._ci_cache = Interrogator(config)
-                print("[INFO] ✅ CLIP 模型加载成功")
-            except Exception as init_error:
-                # 捕获初始化错误（可能是 sentence-transformers 下载失败）
-                error_msg_init = str(init_error)
-                if "sentence-transformers" in error_msg_init.lower() or "all-mpnet" in error_msg_init.lower() or "timeout" in error_msg_init.lower():
-                    print(f"[WARN] ⚠️  CLIP Interrogator 初始化时遇到 sentence-transformers 模型问题（可能无网络）")
-                    print(f"[WARN] ⚠️  错误: {error_msg_init[:200]}")
-                    print("[INFO] 💡 服务器无网络时，将在 /generate 路由中使用用户输入的提示词作为语义描述")
-                    print("[INFO] 💡 这是正常情况，不影响功能使用")
-                    # 不设置缓存，让下次重试
-                    image_extract._ci_cache = None
-                    raise  # 重新抛出异常，让外层异常处理逻辑处理
-                else:
-                    # 其他类型的初始化错误，直接抛出
-                    raise
+        config = Config(clip_model_name="ViT-L-14/openai")
+        print("[INFO] 🔄 正在初始化 CLIP Interrogator...")
+        try:
+            image_extract._ci_cache = Interrogator(config)
+            print("[INFO] ✅ CLIP 模型加载成功")
+        except Exception as init_error:
+            # 捕获初始化错误（可能是 sentence-transformers 下载失败）
+            error_msg_init = str(init_error)
+            if "sentence-transformers" in error_msg_init.lower() or "all-mpnet" in error_msg_init.lower() or "timeout" in error_msg_init.lower():
+                print(f"[WARN] ⚠️  CLIP Interrogator 初始化时遇到 sentence-transformers 模型问题（可能无网络）")
+                print(f"[WARN] ⚠️  错误: {error_msg_init[:200]}")
+                print("[INFO] 💡 服务器无网络时，将在 /generate 路由中使用用户输入的提示词作为语义描述")
+                print("[INFO] 💡 这是正常情况，不影响功能使用")
+                # 不设置缓存，让下次重试
+                image_extract._ci_cache = None
+                raise  # 重新抛出异常，让外层异常处理逻辑处理
+            else:
+                # 其他类型的初始化错误，直接抛出
+                raise
         else:
             print("[INFO] ♻️  使用已缓存的 CLIP 模型")
         
@@ -658,34 +877,82 @@ def image_extract():
             print(f"[INFO] 📝 CLIP Interrogator prompt: {prompt}")
             semantic_prompt = prompt
             # obtain the keyword
-            sentance = prompt.split(",")[0]
-            keyword = extract_keyword(sentance)
-            img_defalt_semantic = add_text_to_img(keyword)
+            try:
+                sentance = prompt.split(",")[0]
+                keyword = extract_keyword(sentance)
+                img_defalt_semantic = add_text_to_img(keyword)
+            except Exception as keyword_error:
+                # 如果关键词提取失败，使用简单的回退方案
+                print(f"[WARN] ⚠️  关键词提取失败: {keyword_error}，使用回退方案")
+                sentance = prompt.split(",")[0].strip()
+                # 简单地从第一个句子中提取第一个有意义的词
+                words = sentance.split()
+                # 过滤停用词
+                stop_words = {'a', 'an', 'the', 'is', 'are', 'on', 'in', 'at', 'with', 'by'}
+                for word in words:
+                    if word.lower() not in stop_words and len(word) > 2:
+                        keyword = word.capitalize()
+                        break
+                else:
+                    keyword = words[0].capitalize() if words else "Semantic"
+                img_defalt_semantic = add_text_to_img(keyword)
         else:
             # 如果没有缓存（初始化失败），设置默认值
             raise Exception("CLIP Interrogator 未初始化")
     except (FileNotFoundError, ConnectionError, TimeoutError, OSError) as e:
-        # 清除失败的缓存，以便下次重试
-        image_extract._ci_cache = None
         error_msg = str(e)
-        if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
-            print(f"[WARN] ⏱️  CLIP 模型下载超时: {e}")
-            print("[INFO] 💡 解决方案:")
-            print("  1. 从本地同步模型文件到服务器（推荐）:")
-            print("     ./sync_models_to_server.sh user@server:/path/to/TypeDance/")
-            print("  2. 或在服务器上运行: python download_open_clip_model.py")
-            print("  3. 如果在中国大陆，使用镜像: export HF_ENDPOINT=https://hf-mirror.com")
-        elif "connection" in error_msg.lower():
-            print(f"[WARN] 🔌 CLIP 模型连接失败: {e}")
-            print("[INFO] 💡 解决方案:")
-            print("  1. 从本地同步模型文件到服务器（推荐）:")
-            print("     ./sync_models_to_server.sh user@server:/path/to/TypeDance/")
-            print("  2. 检查网络连接")
-            print("  3. 使用本地模型缓存（如果已下载）")
+        
+        # ⚠️ 重要：检查是否是 sentence-transformers 相关的超时错误（不影响主要功能）
+        # 如果 prompt 已经成功生成，不应该覆盖它
+        is_sentence_transformer_error = "sentence-transformers" in error_msg.lower() or "all-mpnet" in error_msg.lower()
+        
+        if is_sentence_transformer_error and prompt and prompt.strip():
+            # sentence-transformers 错误，但 prompt 已经成功生成，保留它
+            print(f"[INFO] ℹ️  sentence-transformers 模型网络请求超时（可忽略）")
+            print(f"[INFO] ✅ CLIP Interrogator 已成功生成语义描述: {prompt[:100]}...")
+            print("[INFO] 💡 说明: CLIP 模型已成功加载并工作正常")
+            print("[INFO] 💡 说明: 语义描述已成功生成，功能完全正常")
+            print("[INFO] 💡 提示: 此警告可安全忽略，不影响功能使用")
+            # 保留已生成的 prompt，继续使用
+            semantic_prompt = prompt
+            try:
+                sentance = prompt.split(",")[0]
+                keyword = extract_keyword(sentance)
+                img_defalt_semantic = add_text_to_img(keyword)
+            except Exception as keyword_error:
+                # 如果关键词提取失败，使用简单的回退方案
+                print(f"[WARN] ⚠️  关键词提取失败: {keyword_error}，使用回退方案")
+                sentance = prompt.split(",")[0].strip()
+                words = sentance.split()
+                stop_words = {'a', 'an', 'the', 'is', 'are', 'on', 'in', 'at', 'with', 'by'}
+                for word in words:
+                    if word.lower() not in stop_words and len(word) > 2:
+                        keyword = word.capitalize()
+                        break
+                else:
+                    keyword = words[0].capitalize() if words else "Semantic"
+                img_defalt_semantic = add_text_to_img(keyword)
         else:
-            print(f"[WARN] ❌ CLIP Interrogator 文件/连接错误: {e}")
-        img_defalt_semantic = add_text_to_img("Semantic")
-        prompt = "semantic description unavailable"
+            # 真正的错误，清除缓存
+            image_extract._ci_cache = None
+            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                print(f"[WARN] ⏱️  CLIP 模型下载超时: {e}")
+                print("[INFO] 💡 解决方案:")
+                print("  1. 从本地同步模型文件到服务器（推荐）:")
+                print("     ./sync_models_to_server.sh user@server:/path/to/TypeDance/")
+                print("  2. 或在服务器上运行: python download_open_clip_model.py")
+                print("  3. 如果在中国大陆，使用镜像: export HF_ENDPOINT=https://hf-mirror.com")
+            elif "connection" in error_msg.lower():
+                print(f"[WARN] 🔌 CLIP 模型连接失败: {e}")
+                print("[INFO] 💡 解决方案:")
+                print("  1. 从本地同步模型文件到服务器（推荐）:")
+                print("     ./sync_models_to_server.sh user@server:/path/to/TypeDance/")
+                print("  2. 检查网络连接")
+                print("  3. 使用本地模型缓存（如果已下载）")
+            else:
+                print(f"[WARN] ❌ CLIP Interrogator 文件/连接错误: {e}")
+            img_defalt_semantic = add_text_to_img("Semantic")
+            prompt = "semantic description unavailable"
     except Exception as e:
         # 捕获 Hugging Face 相关错误
         error_type = type(e).__name__
@@ -699,24 +966,47 @@ def image_extract():
             if is_sentence_transformer_error:
                 # sentence-transformers 模型错误，不影响主要功能
                 # 检查是否是因为网络超时（模型文件可能已存在）
-                if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                if prompt and prompt.strip():
+                    # ⚠️ 关键：如果 prompt 已经成功生成，保留它
                     print(f"[INFO] ℹ️  sentence-transformers 模型网络请求超时（可忽略）")
+                    print(f"[INFO] ✅ CLIP Interrogator 已成功生成语义描述: {prompt[:100]}...")
                     print("[INFO] 💡 说明: CLIP 模型已成功加载并工作正常")
                     print("[INFO] 💡 说明: 语义描述已成功生成，功能完全正常")
                     print("[INFO] 💡 提示: 此警告可安全忽略，不影响功能使用")
+                    # 保留已生成的 prompt，继续使用
+                    semantic_prompt = prompt
+                    try:
+                        sentance = prompt.split(",")[0]
+                        keyword = extract_keyword(sentance)
+                        img_defalt_semantic = add_text_to_img(keyword)
+                    except Exception as keyword_error:
+                        # 如果关键词提取失败，使用简单的回退方案
+                        print(f"[WARN] ⚠️  关键词提取失败: {keyword_error}，使用回退方案")
+                        sentance = prompt.split(",")[0].strip()
+                        words = sentance.split()
+                        stop_words = {'a', 'an', 'the', 'is', 'are', 'on', 'in', 'at', 'with', 'by'}
+                        for word in words:
+                            if word.lower() not in stop_words and len(word) > 2:
+                                keyword = word.capitalize()
+                                break
+                        else:
+                            keyword = words[0].capitalize() if words else "Semantic"
+                        img_defalt_semantic = add_text_to_img(keyword)
                 else:
-                    print(f"[WARN] ⚠️  sentence-transformers 模型加载问题（不影响主要功能）: {error_type}")
-                    print("[INFO] 💡 说明: CLIP 模型已成功加载，语义提取功能正常")
-                    print("[INFO] 💡 可选操作: 运行 python download_sentence_transformer.py 下载完整模型")
-                    print("[INFO] 💡 提示: 此错误不影响 /image_extract 接口的正常使用")
-                # 不清除缓存，因为 CLIP 模型已经成功加载
-                # 继续使用已有的结果
-                if prompt:  # 如果 prompt 已经有值，说明 CLIP 模型工作正常
-                    print(f"[INFO] ✅ CLIP 模型工作正常，已生成语义描述: {prompt[:50]}...")
-                    # prompt 已经有值，不需要设置默认值
-                else:
-                    img_defalt_semantic = add_text_to_img("Semantic")
-                    prompt = "semantic description unavailable"
+                    # prompt 未生成，说明是真正的错误
+                    if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                        print(f"[INFO] ℹ️  sentence-transformers 模型网络请求超时（可忽略）")
+                        print("[INFO] 💡 说明: CLIP 模型已成功加载并工作正常")
+                        print("[INFO] 💡 说明: 语义描述已成功生成，功能完全正常")
+                        print("[INFO] 💡 提示: 此警告可安全忽略，不影响功能使用")
+                    else:
+                        print(f"[WARN] ⚠️  sentence-transformers 模型加载问题（不影响主要功能）: {error_type}")
+                        print("[INFO] 💡 说明: CLIP 模型已成功加载，语义提取功能正常")
+                        print("[INFO] 💡 可选操作: 运行 python download_sentence_transformer.py 下载完整模型")
+                        print("[INFO] 💡 提示: 此错误不影响 /image_extract 接口的正常使用")
+                        img_defalt_semantic = add_text_to_img("Semantic")
+                        prompt = "semantic description unavailable"
+                        # 不清除缓存，因为 CLIP 模型已经成功加载
             elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
                 print(f"[WARN] ⏱️  Hugging Face 模型下载超时: {error_type}: {e}")
                 print("[INFO] 💡 解决方案:")
@@ -1103,7 +1393,9 @@ def svg_callback():
         
         # 处理回调
         from utils import handle_svg_callback
+        print(f"[SVG] 开始调用 handle_svg_callback...")
         success = handle_svg_callback(callback_data)
+        print(f"[SVG] handle_svg_callback 返回结果: {success}")
         
         if success:
             return jsonify({"status": "ok"}), 200
